@@ -8,5 +8,6 @@
 # https://github.com/mandarjoshi90/coref/blob/master/util.py 
 # thanks to them
 
+
 def flatten(l):
   return [item for sublist in l for item in sublist]
