@@ -60,7 +60,7 @@ class CorefQA(BertPreTrainedModel):
             span_start: [num_spans], span start indices
             span_end: [num_spans], span end indices
             cluster_ids: [num_spans], span to cluster indices
-            gold_mention_span: [num_candidates], gold mention labels (0/1)
+            gold_mention_span: [num_candidates], gold mention labels (0/1) todo(yuxian): 和span_start/end重复，没必要传
 
         Returns:
 
@@ -90,28 +90,32 @@ class CorefQA(BertPreTrainedModel):
         candidate_mention_scores = self.mention_span_ffnn(candidates_embeddings).squeeze(-1)
         # [k]
         top_mention_scores, top_mention_indices = torch.topk(candidate_mention_scores, k)
-        top_span_starts = candidate_starts[top_mention_indices]
-        top_span_ends = candidate_ends[top_mention_indices]
-        top_span_emb = candidates_embeddings[top_mention_indices]
-        top_span_labels = candidate_labels[top_mention_indices]
+        topk_span_starts = candidate_starts[top_mention_indices]
+        topk_span_ends = candidate_ends[top_mention_indices]
+        topk_span_labels = candidate_labels[top_mention_indices]
 
-        # QA linking
+        # QA linking(for each proposal in k)
         topc_starts = []
         topc_ends = []
         topc_labels = []
         topc_scores = []
-        for mention_idx, (span_start, span_end) in enumerate(zip(top_span_starts, top_span_ends)):
+        questions = []
+        for mention_idx, (span_start, span_end) in enumerate(zip(topk_span_starts, topk_span_ends)):
             # [query_length]
             question_tokens = self.get_question_token_ids(sentence_map=sentence_map,
                                                           flattened_input_ids=flattened_input_ids,
                                                           flattened_input_mask=flattened_input_mask,
                                                           span_start=span_start,
                                                           span_end=span_end)
+            questions.append(question_tokens)
+        # [k, num_windows*window_size, embed_size]
+        batch_forward_candidate_embeddings = self.get_batch_query_mention_embeddings(
+            questions=questions,
+            input_ids=input_ids
+        )
+        for mention_idx, (span_start, span_end) in enumerate(zip(topk_span_starts, topk_span_ends)):
             # [num_windows*window_size, embed_size]
-            forward_candidate_embeddings = self.get_query_mention_embeddings(
-                question_tokens=question_tokens,
-                input_ids=input_ids
-            )
+            forward_candidate_embeddings = batch_forward_candidate_embeddings[mention_idx]
             # [num_candidates, 2*embed_size]
             flattened_forward_candidate_embeddings = self.get_span_embeddings(
                 token_embeddings=forward_candidate_embeddings,
@@ -142,8 +146,8 @@ class CorefQA(BertPreTrainedModel):
                 # [num_candidates, 2*embed_size]
                 flattened_backward_candidate_embeddings = self.get_span_embeddings(
                     token_embeddings=backward_candidate_embeddings,
-                    span_starts=torch.LongTensor([span_start]),
-                    span_ends=torch.LongTensor([span_end]))
+                    span_starts=torch.LongTensor([span_start]).to(backward_candidate_embeddings.device),
+                    span_ends=torch.LongTensor([span_end])).to(backward_candidate_embeddings.device)
                 # [1]
                 backward_score = self.mention_span_ffnn(flattened_backward_candidate_embeddings).squeeze(-1)
                 backward_topc_scores.append(backward_score)
@@ -166,9 +170,9 @@ class CorefQA(BertPreTrainedModel):
         top_link_labels = torch.stack(topc_labels)
 
         # (k, c)
-        same_cluster_indicator = top_link_labels == top_span_labels.unsqueeze(-1)
+        same_cluster_indicator = top_link_labels == topk_span_labels.unsqueeze(-1)
         # (k, c)
-        pairwise_labels = torch.logical_and(same_cluster_indicator, (top_span_labels > 0).unsqueeze(-1))
+        pairwise_labels = torch.logical_and(same_cluster_indicator, (topk_span_labels > 0).unsqueeze(-1))
         dummy_labels = torch.logical_not(torch.any(pairwise_labels, dim=1, keepdims=True))  # [k, 1]
         loss_antecedent_labels = torch.cat([dummy_labels, pairwise_labels], 1).long()  # [k, c + 1]
         dummy_scores = torch.zeros([k, 1]).to(loss_antecedent_labels.device)
@@ -178,7 +182,6 @@ class CorefQA(BertPreTrainedModel):
                                                         (candidate_labels > 0).float())
                                                         # gold_mention_span)
         return loss
-        print(mention_sequence_output.shape)
         # return prediction, loss
 
     def marginal_likelihood(self, antecedent_scores, antecedent_labels):
@@ -296,9 +299,9 @@ class CorefQA(BertPreTrainedModel):
         mention_end_in_sentence = mention_end - sent_start
 
         question_token_ids = torch.cat([origin_tokens[: mention_start_in_sentence],
-                                        torch.Tensor([self.mention_start_idx]).long(),
+                                        torch.Tensor([self.mention_start_idx]).long().to(origin_tokens.device),
                                         origin_tokens[mention_start_in_sentence: mention_end_in_sentence + 1],
-                                        torch.Tensor([self.mention_end_idx]).long(),
+                                        torch.Tensor([self.mention_end_idx]).long().to(origin_tokens.device),
                                         origin_tokens[mention_end_in_sentence + 1:],
                                         ], dim=0)
         return question_token_ids
@@ -334,3 +337,69 @@ class CorefQA(BertPreTrainedModel):
         # [num_windows*window_size, embed_size]
         flattened_forward_embeddings = forward_embeddings.view(-1, self.config.hidden_size)
         return flattened_forward_embeddings
+
+    def get_batch_query_mention_embeddings(self, questions, input_ids):
+        """
+        get embedding of all candidates with respect to question. concatenate all questions as batch
+        Args:
+            questions: list of different sizes tensor of shape [query_length]
+            input_ids: [num_windows, window_size]
+        Returns:
+            flattened_embeddings: [num_questions, num_windws*window_size, embed_size]
+        """
+        num_questions = len(questions)
+        num_windows, window_size = input_ids.shape
+        batch_input_ids = []
+        batch_input_mask = []
+        batch_token_type_ids = []
+        for question_tokens in questions:
+            # [num_windows, query_length]
+            windows_questions = question_tokens.unsqueeze(0).expand([num_windows, -1])
+            question_ones = torch.ones_like(windows_questions)
+            question_zeros = torch.zeros_like(windows_questions)
+            actual_mask = (input_ids == self.pad_idx).long()  # (num_windows, window_size)
+            # [num_windows, query_length + window_size]
+            qa_input_ids = torch.cat([windows_questions, input_ids], 1)
+            # [num_windows, query_length + window_size]
+            qa_input_mask = torch.cat([question_ones, actual_mask], 1)
+            # todo(yuxian): ones or zeros?
+            token_type_ids = torch.cat([question_zeros, torch.ones_like(input_ids)], 1)
+            batch_input_ids.append(qa_input_ids)
+            batch_input_mask.append(qa_input_mask)
+            batch_token_type_ids.append(token_type_ids)
+        # [batch*num_windows, max_seq_len]
+        batch_input_ids = self.pad_stack(batch_input_ids).view(num_questions*num_windows, -1)
+        batch_input_mask = self.pad_stack(batch_input_mask).view(num_questions*num_windows, -1)
+        # todo(yuxian): 1 or 0 ?
+        batch_token_type_ids = self.pad_stack(batch_token_type_ids, 1).view(num_questions*num_windows, -1)
+
+        # [batch*num_windows, max_seq_len, embed_size]
+        forward_embeddings, _ = self.bert(input_ids=batch_input_ids, attention_mask=batch_input_mask,
+                                          token_type_ids=batch_token_type_ids, output_all_encoded_layers=False)
+        # [batch, num_windows, max_seq_len, embed_size]
+        forward_embeddings = forward_embeddings.view(num_questions, num_windows, -1, self.config.hidden_size)
+        # [batch, num_windows, window_size, embed_size]
+        truncated_embeddings = [
+            embeddings[:, question.shape[0]: question.shape[0]+window_size:, ]
+            for embeddings, question in zip(forward_embeddings, questions)
+        ]
+        truncated_embeddings = torch.stack(truncated_embeddings, 0)
+        flattened_forward_embeddings = truncated_embeddings.view(num_questions, -1, self.config.hidden_size)
+        return flattened_forward_embeddings
+
+    @staticmethod
+    def pad_stack(tensors, pad_idx: int = 0, dim: int = -1):
+        """
+        stack tensors and pad to same max length (at last dim)
+        Args:
+            tensors: List of tensor, [seq_len]
+            pad_idx: pad index
+            dim: pad dimension
+        """
+        max_length = max(t.shape[dim] for t in tensors)
+        tensor_num = len(tensors)
+        output_tensor = torch.zeros([tensor_num, max_length], dtype=tensors[0].dtype, device=tensors[0].device)
+        output_tensor.fill_(pad_idx)
+        for tensor_idx, tensor in enumerate(tensors):
+            output_tensor[tensor_idx][: tensor.shape[dim]] = tensor
+        return output_tensor
