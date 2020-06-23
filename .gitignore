@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+sftp-config.json
+
+.DS_Store
+
+*.py.swp
+
 # C extensions
 *.so
 
