@@ -9,12 +9,34 @@
 
 
 import os 
-import torch 
+import torch
+from typing import List
 
 
-from torch.utils.data import TensorDataset, DataLoader, SequentialSampler  
-from data_loader.conll_data_processor import prepare_conll_dataset
+from torch.utils.data import TensorDataset, DataLoader, SequentialSampler, Dataset
+from data_loader.conll_data_processor import prepare_conll_dataset, CoNLLCorefResolution
 
+
+class CoNLLDataset(Dataset):
+    def __init__(self, features: List[CoNLLCorefResolution]):
+        self.features = features
+
+    def __len__(self):
+        return len(self.features)
+
+    def __getitem__(self, item):
+        feature: CoNLLCorefResolution = self.features[item]
+        return {
+            "doc_idx": torch.tensor([feature.doc_idx], dtype=torch.int64),
+            "sentence_map": torch.tensor(feature.sentence_map, dtype=torch.int64),
+            "subtoken_map": torch.tensor(feature.subtoken_map, dtype=torch.int64),
+            "flattened_input_ids": torch.tensor(feature.flattened_input_ids, dtype=torch.int64),
+            "flattened_input_mask": torch.tensor(feature.flattened_input_mask, dtype=torch.int64),
+            "span_start": torch.tensor(feature.span_start, dtype=torch.int64),
+            "span_end": torch.tensor(feature.span_end, dtype=torch.int64),
+            "cluster_ids": torch.tensor(feature.cluster_ids, dtype=torch.int64),
+            "mention_span": torch.tensor(feature.mention_span, dtype=torch.int64)
+        }
 
 
 class CoNLLDataLoader(object):
@@ -57,24 +79,10 @@ class CoNLLDataLoader(object):
 
         return features
 
-
     def get_dataloader(self, data_sign="train"):
 
-        features = self.convert_examples_to_feautres(data_sign=data_sign)
-
-        doc_idx = torch.tensor([f.doc_idx for f in features], dtype=torch.long)
-        sentence_map = torch.tensor([f.sentence_map for f in features], dtype=torch.long)
-        subtoken_map = torch.tensor([f.subtoken_map for f in features], dtype=torch.long)
-        flattened_input_ids = torch.tensor([f.flattened_input_ids for f in features], dtype=torch.long)
-        flattened_input_mask = torch.tensor([f.flattened_input_mask for f in features], dtype=torch.long)
-        span_start = torch.tensor([f.span_start for f in features], dtype=torch.long)
-        span_end = torch.tensor([f.span_end for f in features], dtype=torch.long)
-        mention_span = torch.tensor([f.mention_span for f in features], dtype=torch.long)
-        cluster_ids = torch.tensor([f.cluster_ids for f in features], dtype=torch.long)
-
-        dataset = TensorDataset(doc_idx, sentence_map,subtoken_map, flattened_input_ids, flattened_input_mask, \
-            span_start, span_end, mention_span, cluster_ids )
-
+        features = self.convert_examples_to_features(data_sign=data_sign)
+        dataset = CoNLLDataset(features)
 
         if data_sign == "train":
             datasampler = SequentialSampler(dataset) # RandomSampler(dataset)
@@ -87,20 +95,4 @@ class CoNLLDataLoader(object):
             dataloader = DataLoader(dataset, sampler=datasampler, batch_size=self.test_batch_size)
 
         return dataloader 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
