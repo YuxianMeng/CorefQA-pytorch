@@ -21,6 +21,22 @@ class Config(object):
         for key in kwargs:
             setattr(self, key, kwargs[key])
 
+    def update_args(self, args_namespace):
+        args_dict = args_namespace.__dict__
+        print("Please notice that merge the args_dict and json_config ... ...")
+        for args_key, args_value in args_dict.items():
+            if args_key not in self.__dict__.keys():
+                self.__dict__[args_key] = args_value 
+            else:
+                print("update the config from args input ... ...")
+                self.__dict__[args_key] = args_value
+
+    def print_config(self):
+        model_config = self.to_dict()
+        json_config = json.dumps(model_config, indent=2)
+        print(json_config)
+        return json_config
+
 
 class BertConfig(object):
   """Configuration for `BertModel`."""
