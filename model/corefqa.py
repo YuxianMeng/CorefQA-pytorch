@@ -14,9 +14,6 @@ import torch.nn as nn
 from pytorch_pretrained_bert.modeling import BertPreTrainedModel, BertModel
 
 
-# from config.load_config import BertConfig
-
-
 class CorefQA(BertPreTrainedModel):
     def __init__(self, bert_config, config, device):
         super(CorefQA, self).__init__(bert_config)
