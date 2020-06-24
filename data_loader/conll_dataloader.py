@@ -59,23 +59,10 @@ class CoNLLDataLoader(object):
         self.num_dev_instance = 0 
         self.num_test_instance = 0 
 
-
     def convert_examples_to_features(self, data_sign="train"):
-
-        if data_sign == "train":
-            input_file = os.path.join(self.data_dir, "train.{}.v4_gold_conll".format(self.language))
-            features = prepare_conll_dataset(input_file, self.sliding_window_size, )
-            self.num_train_instance = len(features)
-        elif data_sign == "dev":
-            input_file = os.path.join(self.data_dir, "dev.{}.v4_gold_conll".format(self.language))
-            features = prepare_conll_dataset(input_file, self.sliding_window_size, )
-            self.num_dev_instance = len(features)
-        elif data_sign == "test":
-            input_file = os.path.join(self.data_dir, "test.{}.v4_gold_conll".format(self.language))
-            features = prepare_conll_dataset(input_file, self.sliding_window_size, )
-            self.num_test_instance = len(features)
-        else:
-            raise ValueError 
+        input_file = os.path.join(self.data_dir, "{}.{}.v4_gold_conll".format(data_sign, self.language))
+        features = prepare_conll_dataset(input_file, self.sliding_window_size, )
+        self.__setattr__("num_{}_instance".format(data_sign), len(features))
 
         return features
 
@@ -84,15 +71,15 @@ class CoNLLDataLoader(object):
         features = self.convert_examples_to_features(data_sign=data_sign)
         dataset = CoNLLDataset(features)
 
-        if data_sign == "train":
-            datasampler = SequentialSampler(dataset) # RandomSampler(dataset)
-            dataloader = DataLoader(dataset, sampler=datasampler, batch_size=self.train_batch_size)
-        elif data_sign == "dev":
+        if data_sign == "dev":
             datasampler = SequentialSampler(dataset)
             dataloader = DataLoader(dataset, sampler=datasampler, batch_size=self.dev_batch_size)
         elif data_sign == "test":
             datasampler = SequentialSampler(dataset) 
             dataloader = DataLoader(dataset, sampler=datasampler, batch_size=self.test_batch_size)
+        else:
+            datasampler = SequentialSampler(dataset) # RandomSampler(dataset)
+            dataloader = DataLoader(dataset, sampler=datasampler, batch_size=self.train_batch_size)
 
         return dataloader 
 
