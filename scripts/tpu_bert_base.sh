@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*- 
 
 REPO_PATH=/home/CorefQA-pytorch
-export PYTHONPATH="$PYTHONPATH://home/CorefQA-pytorch"
+export PYTHONPATH="$PYTHONPATH:/home/CorefQA-pytorch"
 export TPU_IP_ADDRESS=10.173.250.154
 export XRT_TPU_CONFIG="tpu_worker;0;$TPU_IP_ADDRESS:8470"
 
