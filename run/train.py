@@ -21,7 +21,7 @@ from config.load_config import Config
 from data_loader.conll_dataloader import CoNLLDataLoader 
 from model.corefqa import CorefQA
 from module.optimization import AdamW, warmup_linear
-from transfomers.modeling import BertConfig
+from transformers.modeling import BertConfig
 
 
 try:
