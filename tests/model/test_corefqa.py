@@ -56,14 +56,14 @@ def test_get_question_tokens():
 
 
 def test_pad():
-    tensors = [torch.LongTensor([1, 2, 3]),
-               torch.LongTensor([1, 2]),
+    tensors = [torch.LongTensor([[1, 2, 3], [1, 2, 3]]),
+               torch.LongTensor([[1, 2], [1, 2]]),
                ]
     padded_tensor = CorefQA.pad_stack(tensors, 1)
     golden_tensor = torch.LongTensor(
         [
-            [1, 2, 3],
-            [1, 2, 1]
+            [[1, 2, 3], [1, 2, 3]],
+            [[1, 2, 1], [1, 2, 1]]
         ]
     )
     assert (padded_tensor == golden_tensor).all().item()

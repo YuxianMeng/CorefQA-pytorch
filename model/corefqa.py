@@ -390,16 +390,22 @@ class CorefQA(BertPreTrainedModel):
     @staticmethod
     def pad_stack(tensors, pad_idx: int = 0, dim: int = -1):
         """
-        stack tensors and pad to same max length (at last dim)
+        stack tensors and pad to same max length
         Args:
-            tensors: List of tensor, [seq_len]
+            tensors: List of tensor, has different length at dim
             pad_idx: pad index
             dim: pad dimension
+        Returns:
+            batch_tensor: [batch, tensor.shape]
         """
         max_length = max(t.shape[dim] for t in tensors)
+        first_tensor_shape = list(tensors[0].shape)
+        final_shape = first_tensor_shape
+        final_shape[dim] = max_length
         tensor_num = len(tensors)
-        output_tensor = torch.zeros([tensor_num, max_length], dtype=tensors[0].dtype, device=tensors[0].device)
+        output_tensor = torch.zeros([tensor_num] + final_shape, dtype=tensors[0].dtype, device=tensors[0].device)
         output_tensor.fill_(pad_idx)
         for tensor_idx, tensor in enumerate(tensors):
-            output_tensor[tensor_idx][: tensor.shape[dim]] = tensor
+            slices = [slice(None, size, None) for size in tensor.shape]
+            output_tensor[tensor_idx][slices] = tensor
         return output_tensor
