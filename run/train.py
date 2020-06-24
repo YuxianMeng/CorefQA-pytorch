@@ -21,10 +21,16 @@ from config.load_config import Config
 from data_loader.conll_dataloader import CoNLLDataLoader 
 from model.corefqa import CorefQA
 from module.optimization import AdamW, warmup_linear
-from pytorch_pretrained_bert.modeling import BertConfig
+from transfomers.modeling import BertConfig
 
-import torch_xla 
-import torch_xla.core.xla_model as xm 
+
+try:
+    import torch_xla 
+    import torch_xla.core.xla_model as xm 
+except:
+    print("=*="*10)
+    print("IMPORT torch_xla when running on the TPU machine. ")
+    print("=*="*10)
 
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
@@ -200,8 +206,8 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
             if (step + 1) % config.gradient_accumulation_steps == 0:
                 if config.fp16:
                     lr_this_step = config.lr * warmup_linear(global_step/ num_train_optimization_steps, config.warmup_proportion)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr_this_step
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = lr_this_step
                 optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
