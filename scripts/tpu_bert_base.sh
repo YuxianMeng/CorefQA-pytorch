@@ -17,7 +17,7 @@ output_path=/mnt/data/ckpt/spanbert_base
 
 
 exp_id=2020.06.24_morn
-config_name=bert_base
+config_name=spanbert_base
 learning_rate=3e-5
 dropout=0.2
 num_train_epoch=20
