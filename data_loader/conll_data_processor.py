@@ -13,7 +13,7 @@ import re
 import data_preprocess.conll as conll 
 from typing import List, Tuple 
 from collections import defaultdict
-from data_loader.bert_tokenizer import FullTokenizer
+from transformers.tokenization import BertTokenizer 
 
 
 REPO_PATH = "/".join(os.path.realpath(__file__).split("/")[:-2])
@@ -49,7 +49,7 @@ def prepare_conll_dataset(input_file, sliding_window_size, tokenizer=None,\
         vocab_file = os.path.join(REPO_PATH, "data_preprocess", "vocab.txt")
 
     if tokenizer is None:
-        tokenizer = FullTokenizer(vocab_file=vocab_file, do_lower_case=False)
+        tokenizer = BertTokenizer(vocab_file=vocab_file, do_lower_case=False)
 
     data_instances = []
 
@@ -176,7 +176,7 @@ def checkout_clusters(doc_info):
     print(clusters)
 
 
-def tokenize_document(doc_info: dict, tokenizer: FullTokenizer) -> dict:
+def tokenize_document(doc_info: dict, tokenizer: BertTokenizer) -> dict:
     """
     tokenize into sub tokens
     :param doc_info:
