@@ -89,7 +89,7 @@ def flatten_clusters(clusters: List[List[Tuple[int, int]]]) -> Tuple[List[int], 
 
 def read_conll_file(conll_file_path):
     documents = []
-    with open(conll_file_path) as fi:
+    with open(conll_file_path, "r", encoding="utf-8") as fi:
         for line in fi:
             begin_document_match = re.match(conll.BEGIN_DOCUMENT_REGEX, line)
             if begin_document_match:
