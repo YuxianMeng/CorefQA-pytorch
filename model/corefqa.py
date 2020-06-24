@@ -10,18 +10,20 @@
 import torch
 import torch.nn as nn
 
-from transformers.modeling import BertPreTrainedModel, BertModel
+# from transformers.modeling import BertPreTrainedModel, BertModel
+from pytorch_pretrained_bert.modeling import BertPreTrainedModel, BertModel
 
 
 # from config.load_config import BertConfig
 
 
 class CorefQA(BertPreTrainedModel):
-    def __init__(self, config):
-        super(CorefQA, self).__init__(config)
+    def __init__(self, bert_config, config, device):
+        super(CorefQA, self).__init__(bert_config)
 
-        self.config = config
-        self.bert = BertModel(config)
+        self.model_config = config
+        self.bert = BertModel(bert_config)
+        self.device = device 
 
         # other configs, todo(yuxian)
         self.pad_idx = 0
@@ -220,8 +222,8 @@ class CorefQA(BertPreTrainedModel):
         candidate_ends = candidate_starts + torch.range(0, self.max_span_width - 1, dtype=torch.int64).unsqueeze(
             0).expand([num_tokens, -1]).contiguous()
         # [num_tokens, max_span_width]
-        candidate_starts = candidate_starts.view(-1)
-        candidate_ends = candidate_ends.view(-1)
+        candidate_starts = candidate_starts.view(-1).to(sentence_map.device)
+        candidate_ends = candidate_ends.view(-1).to(sentence_map.device)
         # [num_tokens*max_span_width]，get sentence_id for each token indices
         candidate_start_sentence_indices = torch.gather(sentence_map, 0, candidate_starts)
         candidate_end_sentence_indices = torch.gather(sentence_map, 0,
@@ -270,7 +272,8 @@ class CorefQA(BertPreTrainedModel):
         # [num_mentions, num_candidates]
         same_span = torch.logical_and(same_start, same_end)
         # [1, num_candidates]
-        candidate_labels = torch.matmul(labels.unsqueeze(0), same_span.long())
+        candidate_labels = torch.matmul(labels.unsqueeze(0).float(), same_span.float())
+        candidate_labels = candidate_labels.long()
         return candidate_labels.squeeze(0)
 
     def get_question_token_ids(self, sentence_map, flattened_input_ids, flattened_input_mask, span_start, span_end):
