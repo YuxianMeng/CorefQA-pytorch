@@ -63,7 +63,7 @@ class CoNLLDataLoader(object):
     def convert_examples_to_features(self, data_sign="train"):
 
         if data_sign == "train":
-            input_file = os.path.join(self.data_dir, "train.{}.v4_gold_conll".format(self.language))
+            input_file = os.path.join(self.data_dir, "dev.{}.v4_gold_conll".format(self.language))
             features = prepare_conll_dataset(input_file, self.sliding_window_size, )
             self.num_train_instance = len(features)
         elif data_sign == "dev":

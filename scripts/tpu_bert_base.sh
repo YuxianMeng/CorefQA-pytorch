@@ -1,13 +1,19 @@
-#!/usr/bin/env bash 
+#!/usr/bin/env python3 
 # -*- coding: utf-8 -*- 
+
+REPO_PATH=/home/CorefQA-pytorch
+export PYTHONPATH="$PYTHONPATH://home/CorefQA-pytorch"
+export TPU_IP_ADDRESS=10.173.250.154
+export XRT_TPU_CONFIG="tpu_worker;0;$TPU_IP_ADDRESS:8470"
+
 
 
 EXP_ID=22_1
-FOLDER_PATH=/home/lixiaoya/corefqa_pytorch
-CONFIG_PATH=${FOLDER_PATH}/config/gpu_bert.yml
-DATA_PATH=/dev/shm/xiaoya/data
-BERT_PATH=/dev/shm/xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12
-EXPORT_DIR=/dev/shm/xiaoya/test_output
+FOLDER_PATH=/home/CorefQA-pytorch
+CONFIG_PATH=${FOLDER_PATH}/config/gpu_spanbert.yml
+DATA_PATH=/home/tpu-data/data
+BERT_PATH=/home/ckpt/spanbert_base
+EXPORT_DIR=/home/ckpt/spanbert_base
 
 
 exp_id=2020.06.24_morn
@@ -22,14 +28,7 @@ seed=2333
 n_gpu=1
 
 
-output_path=/dev/shm/xiaoya/corefqa_pytorch_output/${exp_id}
-
-
-mkdir -p ${output_path}
-export PYTHONPATH=${FOLDER_PATH}
-
-
-CUDA_VISIBLE_DEVICES=1 python3 ${FOLDER_PATH}/run/train.py \
+python3 ${FOLDER_PATH}/run/train.py \
 --n_gpu ${n_gpu} \
 --config_path ${CONFIG_PATH} \
 --config_name ${config_name} \
@@ -42,11 +41,5 @@ CUDA_VISIBLE_DEVICES=1 python3 ${FOLDER_PATH}/run/train.py \
 --seed ${seed} \
 --output_dir ${output_path} \
 --dropout ${dropout} \
---fp16 
-#--loss_scale 0.3
-
-
-
-
-
+--tpu 
 

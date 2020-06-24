@@ -23,12 +23,12 @@ class CorefQA(BertPreTrainedModel):
         self.device = device 
 
         # other configs, todo(yuxian)
-        self.pad_idx = 0
-        self.max_span_width = 128
-        self.span_ratio = 0.4
-        self.max_candidate_num = 1000
-        self.max_antecedent_num = 50
-        self.sliding_window_size = 512
+        self.pad_idx = self.model_config.pad_idx 
+        self.max_span_width = 3
+        self.span_ratio = 0.1
+        self.max_candidate_num = 10
+        self.max_antecedent_num = 5
+        self.sliding_window_size = 50
         self.mention_start_idx = 7
         self.mention_end_idx = 70
         self.mention_loss_ratio = 0.1

@@ -17,12 +17,15 @@ import argparse
 import numpy as np
 import torch 
 
-
 from config.load_config import Config
 from data_loader.conll_dataloader import CoNLLDataLoader 
 from model.corefqa import CorefQA
 from module.optimization import AdamW, warmup_linear
 from pytorch_pretrained_bert.modeling import BertConfig
+
+import torch_xla 
+import torch_xla.core.xla_model as xm 
+
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
@@ -51,6 +54,9 @@ def args_parser():
     parser.add_argument("--seed", type=int, default=3006)
     parser.add_argument("--n_gpu", type=int, default=1)
     parser.add_argument("--export_model", type=bool, default=False)
+    parser.add_argument("--fp16_opt_level", type=str,default="O3",
+        help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
+        "See details at https://nvidia.github.io/apex/amp.html",) 
     parser.add_argument("--output_dir", type=str, default="/home/lixiaoya/output")
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--data_cache", type=bool, default=False,
@@ -59,7 +65,8 @@ def args_parser():
                         "Positive power of 2: static loss scaling value.\n") 
     parser.add_argument('--fp16', action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    parser.add_argument("--loss_scale", type=float, default=0, )
+    parser.add_argument("--loss_scale", type=float, default=1.0, )
+    parser.add_argument('--tpu', action='store_true', help="Whether to use tpu machine")
 
     args = parser.parse_args()
 
@@ -88,19 +95,20 @@ def load_data(config, data_sign="conll"):
 
 
 def load_model(config):
-    device = torch.device("cuda")
-    print("-*-"*10)
-    print("please notice that the device is :")
-    print(device)
-    print("-*-"*10)
-    n_gpu = config.n_gpu 
+
+    if config.tpu:
+        device = xm.xla_device()
+    else:
+        device = torch.device("cuda")
+        print("-*-"*10)
+        print("please notice that the device is :")
+        print(device)
+        print("-*-"*10)
+        n_gpu = config.n_gpu 
     bert_config = BertConfig.from_json_file(os.path.join(config.bert_model, "config.json"))
     model = CorefQA(bert_config, config, device)
     
     model.to(device)
-
-    if config.fp16:
-        model.half()
 
     if config.n_gpu > 1:
         model = torch.nn.DataParallel(model)
@@ -112,25 +120,22 @@ def load_model(config):
     {"params": [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], "weight_decay": 0.01},
     {"params": [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], "weight_decay": 0.0}]
 
+    optimizer = AdamW(optimizer_grouped_parameters, lr=config.lr, eps=10e-8)
 
     if config.fp16:
         try: 
-            from apex.optimizer import FP16_Optimizer 
-            from apex.optimizers import FusedAdam
+            from apex import amp 
         except ImportError:
             raise ImportError("Please install apex from https://www.github.com/nvidia/apex"
                 "to use distributed and fp16 training.")
-        optimizer = FusedAdam(optimizer_grouped_parameters,
-                                      lr=config.lr,
-                                      bias_correction=False,
-                                      max_grad_norm=1.0)
-        if config.loss_scale == 0:
-            optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
-        else:
-            optimizer = FP16_Optimizer(optimizer, static_loss_scale=config.loss_scale)
-    else:
-        optimizer = AdamW(optimizer_grouped_parameters, lr=config.lr, eps=10e-8)
 
+        model, optimizer = amp.initialize(model, optimizer, opt_level=config.fp16_opt_level)
+
+    # Distributed training (should be after apex fp16 initialization)
+    if config.local_rank != -1:
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[config.local_rank], output_device=config.local_rank, find_unused_parameters=True
+        )
 
     sheduler = None
     return model, optimizer, sheduler, device, n_gpu
@@ -184,9 +189,14 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
             nb_tr_steps += 1
 
             if config.fp16:
-                optimizer.backward(loss)
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
             else:
                 loss.backward()
+
+            if config.tpu:
+                xm.optimizer_step(optimizer, barrier=True)
+
             if (step + 1) % config.gradient_accumulation_steps == 0:
                 if config.fp16:
                     lr_this_step = config.lr * warmup_linear(global_step/ num_train_optimization_steps, config.warmup_proportion)
@@ -250,6 +260,14 @@ def merge_config(args_config):
 def main():
     args_config = args_parser()
     config = merge_config(args_config) 
+
+    if config.fp16:
+        try:
+            import apex 
+            apex.amp.register_half_function(torch, "einsum")
+        except:
+            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+
     train_dataloader, dev_dataloader, test_dataloader = load_data(config, data_sign="conll")
     model, optimizer, sheduler, device, n_gpu = load_model(config)
     train(model, optimizer, sheduler, train_dataloader, dev_dataloader, test_dataloader, config, device, n_gpu) 
