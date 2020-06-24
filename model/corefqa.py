@@ -10,8 +10,8 @@
 import torch
 import torch.nn as nn
 
-# from transformers.modeling import BertPreTrainedModel, BertModel
-from pytorch_pretrained_bert.modeling import BertPreTrainedModel, BertModel
+
+from transformers.modeling import BertPreTrainedModel, BertModel
 
 
 class CorefQA(BertPreTrainedModel):
