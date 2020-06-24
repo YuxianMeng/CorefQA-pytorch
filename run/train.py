@@ -52,7 +52,7 @@ def args_parser():
     parser.add_argument("--checkpoint", default=100, type=int)
     parser.add_argument("--do_eval", default=bool, type=bool)
     parser.add_argument("--lr", default=5e-5, type=float)
-    parser.add_argument("--eval_per_epoch", default=5, type=int) 
+    parser.add_argument("--eval_per_epoch", default=10, type=int) 
     parser.add_argument("--warmup_proportion", default=0.1, type=float)
     parser.add_argument("--num_train_epochs", default=5, type=int)
     parser.add_argument("--local_rank", type=int, default=-1)
@@ -73,6 +73,7 @@ def args_parser():
                         help="Whether to use 16-bit float precision instead of 32-bit")
     parser.add_argument("--loss_scale", type=float, default=1.0, )
     parser.add_argument('--tpu', action='store_true', help="Whether to use tpu machine")
+    parser.add_argument('--debug', action='store_true', help="print some debug information.")
 
     args = parser.parse_args()
 
@@ -166,6 +167,9 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
         print("start {} Epoch ... ".format(str(epoch)))
         model.train()
         logger.info("Start epoch #{} (lr = {})...".format(epoch, config.lr))
+
+        if config.debug:
+            print("INFO: start train the CorefQA Model.")
         
         for step, batch in enumerate(train_dataloader):
             ##if n_gpu == 1:
@@ -183,6 +187,10 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
             span_starts = span_starts.to(device)
             span_ends = span_ends.to(device)
             cluster_ids = cluster_ids.to(device)
+
+            if config.debug and step % 2 == 0:
+                print("INFO: The {} epoch training process {}.".format(epoch, step))
+
             loss = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, input_ids=input_ids, input_mask=input_mask, \
                 gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
             print("loss")

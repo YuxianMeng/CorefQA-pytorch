@@ -41,5 +41,6 @@ python3 ${FOLDER_PATH}/run/train.py \
 --seed ${seed} \
 --output_dir ${output_path} \
 --dropout ${dropout} \
---tpu 
+--tpu \
+--debug 
 
