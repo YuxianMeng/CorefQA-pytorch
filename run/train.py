@@ -104,6 +104,7 @@ def load_model(config):
 
     if config.tpu:
         device = xm.xla_device()
+        n_gpu = 0
     else:
         device = torch.device("cuda")
         print("-*-"*10)
