@@ -9,13 +9,18 @@
 
 """
 
+import os
 import torch
 from model.corefqa import CorefQA
 from data_loader.conll_dataloader import CoNLLDataLoader, CoNLLDataset
+from transformers import BertConfig
 
 
-# MODEL: CorefQA = CorefQA.from_pretrained("/data/nfsdata2/nlp_application/models/bert/chinese_L-12_H-768_A-12")
-MODEL: CorefQA = CorefQA.from_pretrained("/xiaoya/pretrain_ckpt/spanbert_base_cased")
+bert_model = "/dev/shm/xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12"
+bert_config = BertConfig.from_json_file(os.path.join(bert_model, "config.json"))
+config = None
+device = 0
+MODEL = CorefQA(bert_config, config, device)
 
 
 def test_forward_with_fake_data():
@@ -74,7 +79,7 @@ def test_forward_with_conll_data():
 
     class Config(object):
         def __init__(self, ):
-            self.data_dir = "/xiaoya/data"
+            self.data_dir = "/dev/shm/xiaoya/data"
             self.sliding_window_size = 128
     config = Config()
     print(config.data_dir)
