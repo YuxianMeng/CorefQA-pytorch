@@ -299,7 +299,7 @@ class CorefQA(BertPreTrainedModel):
         # [1, num_candidates]
         candidate_labels = torch.matmul(labels.unsqueeze(0).float(), same_span.float())
         candidate_labels = candidate_labels.long()
-        return candidate_labels 
+        return candidate_labels.squeeze(0)
 
     def get_question_token_ids(self, sentence_map, flattened_input_ids, flattened_input_mask, span_start, span_end,
                                return_offset=False):

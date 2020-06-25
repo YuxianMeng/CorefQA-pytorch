@@ -37,7 +37,7 @@ if __name__ == "__main__":
     print(config.data_dir)
     dataloader = CoNLLDataLoader(config)
 
-    coref_prediction = {}
+    coref_prediction_dict = {}
     coref_evaluator = metrics.CorefEvaluator()
 
     loader = dataloader.get_dataloader("test")
@@ -53,19 +53,19 @@ if __name__ == "__main__":
 
         print("-&"*10)
         print(idx)
-        print("doc_idx: ", tmp_doc_idx)
+        print("doc_idx: ", tmp_doc_idx[0])
         print("gold_mention_span: ", tmp_mention_span)
         print("gold_cluster_ids:", tmp_cluster_ids)
 
 
-        coref_prediction[tmp_doc_idx] = tmp_cluster_ids 
-        coref_evaluator.update(tmp_cluster_ids, tmp_cluster_ids,tmp_mention_span, tmp_mention_span)
+        coref_prediction_dict[tmp_doc_idx[0]] = tmp_cluster_ids 
+        coref_evaluator.update(tmp_cluster_ids, tmp_cluster_ids, tmp_mention_span, tmp_mention_span)
 
         if idx > 5:
             break
 
     summary_dict = {}
-    conll_results = conll.evaluate_conll(config.eval_path, coref_prediction, False)
+    conll_results = conll.evaluate_conll(config.eval_path, coref_prediction_dict, False)
     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
     summary_dict["Average F1 (conll)"] = average_f1 
     print("Average F1 (conll) : {:.2f}%".format(average_f1))
