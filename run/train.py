@@ -15,16 +15,15 @@ import random
 import logging 
 import argparse  
 import numpy as np
-import torch 
+import torch
 
-
-import data_preprocess.conll as conll 
+import data_preprocess.conll as conll
 from config.load_config import Config
 from transformers.modeling import BertConfig
-from data_loader.conll_dataloader import CoNLLDataLoader 
+from data_loader.conll_dataloader import CoNLLDataLoader
 from model.corefqa import CorefQA
-from module import metrics 
-from module.optimization import AdamW, warmup_linear 
+from module import metrics
+from module.optimization import AdamW, warmup_linear
 
 
 try:
@@ -66,7 +65,7 @@ def args_parser():
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
         "See details at https://nvidia.github.io/apex/amp.html",) 
     parser.add_argument("--output_dir", type=str, default="/home/lixiaoya/output")
-    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--dropout", type=float, default=0.2)  # todo(yuxian) not used
     parser.add_argument("--data_cache", type=bool, default=False,
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
                         "0 (default value): dynamic loss scaling.\n"
@@ -77,6 +76,7 @@ def args_parser():
     parser.add_argument('--tpu', action='store_true', help="Whether to use tpu machine")
     parser.add_argument('--debug', action='store_true', help="print some debug information.")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--mention_chunk_size", type=int, default=3, help="use mention chunk to reduce memory usage")
 
     args = parser.parse_args()
 
@@ -101,7 +101,7 @@ def load_data(config, data_sign="conll"):
     dev_dataloader = dataloader.get_dataloader("dev")
     test_dataloader = dataloader.get_dataloader("test")
 
-    return train_dataloader, dev_dataloader, test_dataloader 
+    return train_dataloader, dev_dataloader, test_dataloader
 
 
 def load_model(config):
@@ -152,19 +152,28 @@ def load_model(config):
     return model, optimizer, sheduler, device, n_gpu
 
 
-def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_dataloader, config, \
-    device, n_gpu,):
+def backward_loss(optimizer, loss, fp16=False, retain_graph=False):
+    if fp16:
+        from apex import amp
+        with amp.scale_loss(loss, optimizer) as scaled_loss:
+            scaled_loss.backward(retain_graph=retain_graph)
+    else:
+        loss.backward(retain_graph=retain_graph)
+
+
+def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_dataloader, config,
+          device, n_gpu,):
 
     tr_loss = 0
     nb_tr_examples = 0
     nb_tr_steps = 0
     global_step = 0
 
-    best_dev_average_f1 = 0 
-    best_dev_summary_dict = None 
+    best_dev_average_f1 = 0
+    best_dev_summary_dict = None
 
-    test_average_f1_when_dev_best = 0 
-    test_summary_dict_when_dev_best = None 
+    test_average_f1_when_dev_best = 0
+    test_summary_dict_when_dev_best = None
 
     start_time = time.time()
     num_train_optimization_steps = len(train_dataloader) // config.gradient_accumulation_steps * config.num_train_epochs
@@ -173,6 +182,7 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
 
 
     for epoch in range(int(config.num_train_epochs)):
+        epoch_loss = 0.0
         print("=*="*20)
         print("start {} Epoch ... ".format(str(epoch)))
         model.train()
@@ -201,30 +211,71 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
             if config.debug and step % 2 == 0:
                 print("INFO: The {} epoch training process {}.".format(epoch, step))
 
-            loss = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, input_ids=input_ids, input_mask=input_mask, \
-                gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
-            print("loss")
-            if n_gpu > 1:
-                loss = loss.mean()
-            if config.gradient_accumulation_steps > 1:
-                loss = loss / config.gradient_accumulation_steps
+            # loss = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, input_ids=input_ids, input_mask=input_mask, \
+            #     gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
 
-            tr_loss += loss.item()
+            loss = 0.0
+            (proposal_loss, sentence_map, input_ids, input_mask,
+             candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
+             topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, input_ids=input_ids, input_mask=input_mask,
+                         gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
+            proposal_loss /= config.gradient_accumulation_steps
+            tr_loss += proposal_loss.item()
+            epoch_loss += proposal_loss.item()
+            if config.mention_chunk_size:
+                backward_loss(optimizer=optimizer, fp16=config.fp16, loss=proposal_loss)
+            else:
+                loss += proposal_loss
+            item_loss = 0
+            item_loss += proposal_loss.item()
+            tr_loss += proposal_loss.item()
+
+            # mention linking
+            print(len(set(topk_span_starts.tolist()) & set(span_starts.tolist())))
+            print(span_starts.shape[0])
+            mention_num = topk_span_starts.shape[0]
+            chunk_num = mention_num // config.mention_chunk_size
+            for chunk_idx in range(chunk_num):
+                chunk_start = config.mention_chunk_size * chunk_idx
+                chunk_end = chunk_start + config.mention_chunk_size
+                link_loss = model.batch_qa_linking(
+                    sentence_map=sentence_map,
+                    input_ids=input_ids,
+                    input_mask=input_mask,
+                    token_type_ids=token_type_ids,
+                    attention_mask=attention_mask,
+                    candidate_starts=candidate_starts,
+                    candidate_ends=candidate_ends,
+                    candidate_labels=candidate_labels,
+                    candidate_mention_scores=candidate_mention_scores,
+                    topk_span_starts=topk_span_starts[chunk_start: chunk_end],
+                    topk_span_ends=topk_span_ends[chunk_start: chunk_end],
+                    topk_span_labels=topk_span_labels[chunk_start: chunk_end],
+                    topk_mention_scores=topk_mention_scores[chunk_start: chunk_end],
+                    origin_k=mention_num,
+                    gold_mention_span=gold_mention_span,
+                    recompute_mention_scores=True
+                )
+                link_loss /= chunk_num
+                link_loss /= config.gradient_accumulation_steps
+                if config.mention_chunk_size:
+                    backward_loss(optimizer=optimizer, loss=link_loss, fp16=config.fp16, retain_graph=False)
+                else:
+                    loss += link_loss
+                tr_loss += link_loss.item()
+                epoch_loss += link_loss.item()
+
+            print(epoch_loss/(step+1))
             nb_tr_examples += input_ids.size(0)
             nb_tr_steps += 1
-
-            if config.fp16:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
 
             if config.tpu:
                 xm.optimizer_step(optimizer, barrier=True)
 
             if (step + 1) % config.gradient_accumulation_steps == 0:
                 if config.fp16:
-                    lr_this_step = config.lr * warmup_linear(global_step/ num_train_optimization_steps, config.warmup_proportion)
+                    lr_this_step = config.lr * warmup_linear(global_step / num_train_optimization_steps,
+                                                             config.warmup_proportion)
                     for param_group in optimizer.param_groups:
                         param_group['lr'] = lr_this_step
                 optimizer.step()
@@ -277,9 +328,9 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
         doc_idx, sentence_map, subtoken_map, input_ids, input_mask = case_feature["doc_idx"].squeeze(0), \
             case_feature["sentence_map"].squeeze(0), case_feature["flattened_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_input_mask"].view(-1, config.sliding_window_size)
 
-        gold_mention_span, token_type_ids, attention_mask = case_feature["mention_span"].squeeze(0), None, None 
+        gold_mention_span, token_type_ids, attention_mask = case_feature["mention_span"].squeeze(0), None, None
         span_starts, span_ends, gold_cluster_ids = case_feature["span_start"].squeeze(0), case_feature["span_end"].squeeze(0), case_feature["cluster_ids"].squeeze(0)
-        
+
         doc_idx, sentence_map,input_ids,input_mask,gold_mention_span,span_starts,span_ends, gold_cluster_ids = doc_idx.to(device), sentence_map.to(device), \
             input_ids.to(device), input_mask.to(device), gold_mention_span.to(device), span_starts.to(device), span_ends.to(device), gold_cluster_ids.to(device)
 
@@ -293,25 +344,25 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
         gold_cluster_ids = gold_cluster_ids.to("cpu").numpy().tolist()
         mention_to_gold = mention_to_gold.to("cpu").numpy().tolist()
 
-        coref_prediction[doc_idx] = pred_cluster_ids 
+        coref_prediction[doc_idx] = pred_cluster_ids
         coref_evaluator.update(pred_cluster_ids, gold_cluster_ids, mention_to_predict, mention_to_gold)
 
     summary_dict = {}
     conll_results = conll.evaluate_conll(config.eval_path, coref_prediction, official_stdout)
     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
-    summary_dict["Average F1 (conll)"] = average_f1 
+    summary_dict["Average F1 (conll)"] = average_f1
     print("Average F1 (conll) : {:.2f}%".format(average_f1))
 
     p, r, f = coref_evaluator.get_prf()
-    summary_dict["Average F1 (py)"] = f 
+    summary_dict["Average F1 (py)"] = f
     print("Average F1 (py): {:.2f}%".format(f * 100))
-    summary_dict["Average precision (py)"] = p 
+    summary_dict["Average precision (py)"] = p
     print("Average precision (py): {:.2f}%".format(p * 100))
-    summary_dict["Average recall (py)"] = r 
+    summary_dict["Average recall (py)"] = r
     print("Average recall (py): {:.2f}%".format(r * 100))
     print("###"*20)
 
-    return summary_dict, average_f1 
+    return summary_dict, average_f1
 
 
 def merge_config(args_config):

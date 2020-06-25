@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*- 
 
 
-# author: yuxian meng 
+# author: yuxian meng
 # description:
 # corefqa model 
 
 
 import torch
 import torch.nn as nn
+from more_itertools import chunked
 
 
 from transformers.modeling import BertPreTrainedModel, BertModel
@@ -56,25 +57,25 @@ class CorefQA(BertPreTrainedModel):
             input_mask: [num_windows, window_size]
             token_type_ids: [num_windows, window_size]
             attention_mask:
-            span_start: [num_spans], span start indices
-            span_end: [num_spans], span end indices
+            span_starts: [num_spans], span start indices
+            span_ends: [num_spans], span end indices
             cluster_ids: [num_spans], span to cluster indices
-            gold_mention_span: [num_candidates], gold mention labels (0/1) todo(yuxian): 和span_start/end重复，没必要传
+            gold_mention_span: [num_candidates] todo(yuxian): 和span_start/end重复，没必要传
 
         Returns:
 
         """
         num_tokens = sentence_map.shape[0]
-        flattened_input_ids = input_ids.view(-1)
-        flattened_input_mask = input_mask.view(-1)
+        # flattened_input_ids = input_ids.view(-1)
+        # flattened_input_mask = input_mask.view(-1)
+        # [num_windows, window_size, embed_size]
         mention_sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask,
                                                output_all_encoded_layers=False)
-        # [num_candidates], [num_candidates]
+        # [num_candidates], [num_candidates]  todo(yuxian): 这里的candidate可能由于self.max_span_width的原因不能完全覆盖golden的candidates？
         candidate_starts, candidate_ends = self.get_candidate_spans(sentence_map)
         num_candidate_mentions = max(int(num_tokens * self.span_ratio), 1)
         k = min(self.max_candidate_num, num_candidate_mentions)
-        c = min(self.max_antecedent_num, k)
-        # [num_candidates]
+        # [num_candidates, embed_size]
         candidates_embeddings = self.get_span_embeddings(mention_sequence_output.view(-1, self.config.hidden_size),
                                                          candidate_starts,
                                                          candidate_ends)
@@ -87,12 +88,79 @@ class CorefQA(BertPreTrainedModel):
         # get topk scores
         # [num_candidates]
         candidate_mention_scores = self.mention_span_ffnn(candidates_embeddings).squeeze(-1)
-        # [k]
+        proposal_loss = self.bce_loss(candidate_mention_scores,
+                                      (candidate_labels > 0).float())
+        proposal_loss *= self.mention_loss_ratio
+        # [k]  todo(yuxian): 不需要score > 0.0?
         top_mention_scores, top_mention_indices = torch.topk(candidate_mention_scores, k)
         topk_span_starts = candidate_starts[top_mention_indices]
         topk_span_ends = candidate_ends[top_mention_indices]
         topk_span_labels = candidate_labels[top_mention_indices]
+        # return (proposal_loss, sentence_map, input_ids, input_mask,
+        #         candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
+        #         topk_span_starts, topk_span_ends, topk_span_labels, top_mention_scores)
+        return (proposal_loss, sentence_map.detach(), input_ids.detach(), input_mask.detach(),
+                candidate_starts.detach(), candidate_ends.detach(), candidate_labels.detach(), candidate_mention_scores.detach(),
+                topk_span_starts.detach(), topk_span_ends.detach(), topk_span_labels.detach(), top_mention_scores.detach())
 
+    def batch_qa_linking(
+        self,
+        sentence_map,
+        input_ids,
+        input_mask,
+        token_type_ids,
+        attention_mask,
+        candidate_starts,
+        candidate_ends,
+        candidate_labels,
+        candidate_mention_scores,
+        topk_span_starts,
+        topk_span_ends,
+        topk_span_labels,
+        topk_mention_scores,
+        origin_k,
+        gold_mention_span,
+        recompute_mention_scores=False,
+        mode="train",
+    ):
+        """
+
+        Args:
+            sentence_map: [num_tokens], each token's sentence index
+            input_ids: [num_windows, window_size]
+            input_mask: [num_windows, window_size]
+            token_type_ids: [num_windows, window_size]
+            attention_mask:
+            candidate_starts: [num_candidates]
+            candidate_ends: [num_candidates]
+            candidate_labels: [num_candidates]
+            candidate_mention_scores: [num_candidates]
+            topk_span_starts: [k]
+            topk_span_ends: [k]
+            topk_span_labels: [k]
+            topk_mention_scores: [k]
+            origin_k: total mention num
+            gold_mention_span: [num_candidates] todo(yuxian): 和span_start/end重复，没必要传
+            recompute_mention_scores: if True, recompute mention scores
+            mode: if "train", only return loss. Return other variables if not train.
+        Returns:
+
+        """
+        if recompute_mention_scores:
+            mention_sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask,
+                                                   output_all_encoded_layers=False)
+            # [num_candidates]
+            candidates_embeddings = self.get_span_embeddings(mention_sequence_output.view(-1, self.config.hidden_size),
+                                                             candidate_starts,
+                                                             candidate_ends)
+            # get topk scores
+            # [num_candidates]
+            candidate_mention_scores = self.mention_span_ffnn(candidates_embeddings).squeeze(-1)
+
+        flattened_input_ids = input_ids.view(-1)
+        flattened_input_mask = input_mask.view(-1)
+        k = topk_span_starts.shape[0]
+        c = min(self.max_antecedent_num, origin_k)
         # QA linking(for each proposal in k)
         questions = []
         for span_start, span_end in zip(topk_span_starts, topk_span_ends):
@@ -108,6 +176,7 @@ class CorefQA(BertPreTrainedModel):
             questions=questions,
             input_ids=input_ids
         )
+
         # [k, num_candidates, embed_size]
         batch_forward_start_embeddings = torch.index_select(batch_forward_embeddings, dim=1,
                                                             index=candidate_starts)
@@ -184,7 +253,7 @@ class CorefQA(BertPreTrainedModel):
         # [k, c]
         cluster_mention_scores = (
             (batch_topc_forward_scores + batch_backward_mention_scores) / 2 +
-            top_mention_scores.unsqueeze(-1) +
+            topk_mention_scores.unsqueeze(-1) +
             batch_topc_mention_scores
         )
 
@@ -193,22 +262,17 @@ class CorefQA(BertPreTrainedModel):
         # (k, c)
         pairwise_labels = torch.logical_and(same_cluster_indicator, (topk_span_labels > 0).unsqueeze(-1))
         dummy_labels = torch.logical_not(torch.any(pairwise_labels, dim=1, keepdims=True))  # [k, 1]
-        
 
         loss_antecedent_labels = torch.cat([dummy_labels, pairwise_labels], 1).long()  # [k, c + 1]
         dummy_scores = torch.zeros([k, 1]).to(loss_antecedent_labels.device)
         loss_antecedent_scores = torch.cat([dummy_scores, cluster_mention_scores], 1)  # [k, c + 1]
-        loss = self.marginal_likelihood(loss_antecedent_scores, loss_antecedent_labels)
-        loss += self.mention_loss_ratio * self.bce_loss(candidate_mention_scores,
-                                                        (candidate_labels > 0).float())
-                                                        # gold_mention_span)
-        if mode == "train": 
-            return loss
-        else:
-            mention_to_predict = torch.sigmoid(candidate_mention_scores)
-            mention_to_predict = mention_to_predict > self.model_config.threshold 
-            mention_to_gold = gold_mention_span 
-            return loss, loss_antecedent_scores, mention_to_predict, mention_to_gold  
+        link_loss = self.marginal_likelihood(loss_antecedent_scores, loss_antecedent_labels)
+        if mode == "train":
+            return link_loss
+        mention_to_predict = torch.sigmoid(candidate_mention_scores)
+        mention_to_predict = mention_to_predict > self.model_config.threshold
+        mention_to_gold = gold_mention_span
+        return link_loss, loss_antecedent_scores, mention_to_predict, mention_to_gold
 
     def marginal_likelihood(self, antecedent_scores, antecedent_labels):
         """
@@ -240,23 +304,24 @@ class CorefQA(BertPreTrainedModel):
         num_tokens = sentence_map.shape[0]
         # candidate_span: every position can be span start, there are max_span_width kinds of end for each start
         # [num_tokens, max_span_width]
-        candidate_starts = torch.range(0, num_tokens - 1, dtype=torch.int64).unsqueeze(1).expand(
+        candidate_starts = torch.arange(0, num_tokens, dtype=torch.int64).unsqueeze(1).expand(
             [-1, self.max_span_width]).contiguous()
         # [num_tokens, max_span_width]
-        candidate_ends = candidate_starts + torch.range(0, self.max_span_width - 1, dtype=torch.int64).unsqueeze(
+        candidate_ends = candidate_starts + torch.arange(0, self.max_span_width, dtype=torch.int64).unsqueeze(
             0).expand([num_tokens, -1]).contiguous()
-        # [num_tokens, max_span_width]
+        # [num_tokens*max_span_width]
         candidate_starts = candidate_starts.view(-1).to(sentence_map.device)
         candidate_ends = candidate_ends.view(-1).to(sentence_map.device)
         # [num_tokens*max_span_width]，get sentence_id for each token indices
-        candidate_start_sentence_indices = torch.gather(sentence_map, 0, candidate_starts)
-        candidate_end_sentence_indices = torch.gather(sentence_map, 0,
-                                                      torch.clamp(candidate_ends, min=0, max=num_tokens - 1))
+        candidate_start_sentence_indices = sentence_map[candidate_starts]
+        candidate_end_sentence_indices = sentence_map[torch.clamp(candidate_ends, min=0, max=num_tokens - 1)]
         # [num_tokens*max_span_width]，legitimate spans should reside in a single sentence.
         candidate_mask = torch.logical_and(
             candidate_ends < num_tokens,
-            (candidate_start_sentence_indices - candidate_end_sentence_indices) == 0
+            (candidate_start_sentence_indices - candidate_end_sentence_indices) == 0,
         )
+        # todo(yuxian): remove padding candidates
+        # candidate_mask = candidate_mask.logical_and(flattened_input_ids[candidate_ends] != 0)
         candidate_starts = candidate_starts[candidate_mask]
         candidate_ends = candidate_ends[candidate_mask]
         return candidate_starts, candidate_ends
@@ -295,7 +360,7 @@ class CorefQA(BertPreTrainedModel):
         same_end = labeled_ends.unsqueeze(1) == candidate_ends.unsqueeze(0)
         # [num_mentions, num_candidates]
         same_span = torch.logical_and(same_start, same_end)
-        
+
         # [1, num_candidates]
         candidate_labels = torch.matmul(labels.unsqueeze(0).float(), same_span.float())
         candidate_labels = candidate_labels.long()
