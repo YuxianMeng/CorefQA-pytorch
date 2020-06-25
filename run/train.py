@@ -76,6 +76,7 @@ def args_parser():
     parser.add_argument("--loss_scale", type=float, default=1.0, )
     parser.add_argument('--tpu', action='store_true', help="Whether to use tpu machine")
     parser.add_argument('--debug', action='store_true', help="print some debug information.")
+    parser.add_argument("--threshold", type=float, default=0.5)
 
     args = parser.parse_args()
 
@@ -267,8 +268,7 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
 
     print("###"*20)
     print("="*8 + "Evaluate {} dataset".format(eval_sign) + "="*8)
-    gold_cluster = []
-    pred_cluster = []
+
     coref_prediction = {}
     coref_evaluator = metrics.CorefEvaluator()
 
@@ -277,10 +277,21 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
         doc_idx, sentence_map, subtoken_map, input_ids, input_mask = case_feature["doc_idx"].squeeze(0), \
             case_feature["sentence_map"].squeeze(0), case_feature["flattened_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_input_mask"].view(-1, config.sliding_window_size)
 
-        gold_cluster_ids = case_feature["cluster_ids"].squeeze(0)
+        gold_mention_span, token_type_ids, attention_mask = case_feature["mention_span"].squeeze(0), None, None 
+        span_starts, span_ends, gold_cluster_ids = case_feature["span_start"].squeeze(0), case_feature["span_end"].squeeze(0), case_feature["cluster_ids"].squeeze(0)
+        
+        doc_idx, sentence_map,input_ids,input_mask,gold_mention_span,span_starts,span_ends, gold_cluster_ids = doc_idx.to(device), sentence_map.to(device), \
+            input_ids.to(device), input_mask.to(device), gold_mention_span.to(device), span_starts.to(device), span_ends.to(device), gold_cluster_ids.to(device)
 
-        pred_cluster_ids = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, \
-            input_ids=input_ids, input_mask=input_mask)
+        with torch.no_grad():
+            loss, pred_cluster_ids, mention_to_predict, mention_to_gold = model_object(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, \
+                input_ids=input_ids, input_mask=input_mask, gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, \
+                attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=gold_cluster_ids, mode="eval")
+
+        pred_cluster_ids = pred_cluster_ids.detach().cpu().numpy().tolist()
+        mention_to_predict = mention_to_predict.detach().cpu().numpy().tolist()
+        gold_cluster_ids = gold_cluster_ids.to("cpu").numpy().tolist()
+        mention_to_gold = mention_to_gold.to("cpu").numpy().tolist()
 
         coref_prediction[doc_idx] = pred_cluster_ids 
         coref_evaluator.update(pred_cluster_ids, gold_cluster_ids, mention_to_predict, mention_to_gold)

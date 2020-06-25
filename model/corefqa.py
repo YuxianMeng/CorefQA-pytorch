@@ -45,7 +45,7 @@ class CorefQA(BertPreTrainedModel):
         self.bce_loss = torch.nn.BCEWithLogitsLoss()
 
     def forward(self, doc_idx, sentence_map, subtoken_map, input_ids, input_mask, gold_mention_span=None,
-                token_type_ids=None, attention_mask=None, span_starts=None, span_ends=None, cluster_ids=None):
+                token_type_ids=None, attention_mask=None, span_starts=None, span_ends=None, cluster_ids=None, mode="train"):
         """
         forward
         Args:
@@ -195,17 +195,20 @@ class CorefQA(BertPreTrainedModel):
         dummy_labels = torch.logical_not(torch.any(pairwise_labels, dim=1, keepdims=True))  # [k, 1]
         
 
-        if span_starts is not None and span_ends is not None and cluster_ids is not None:
-            loss_antecedent_labels = torch.cat([dummy_labels, pairwise_labels], 1).long()  # [k, c + 1]
-            dummy_scores = torch.zeros([k, 1]).to(loss_antecedent_labels.device)
-            loss_antecedent_scores = torch.cat([dummy_scores, cluster_mention_scores], 1)  # [k, c + 1]
-            loss = self.marginal_likelihood(loss_antecedent_scores, loss_antecedent_labels)
-            loss += self.mention_loss_ratio * self.bce_loss(candidate_mention_scores,
+        loss_antecedent_labels = torch.cat([dummy_labels, pairwise_labels], 1).long()  # [k, c + 1]
+        dummy_scores = torch.zeros([k, 1]).to(loss_antecedent_labels.device)
+        loss_antecedent_scores = torch.cat([dummy_scores, cluster_mention_scores], 1)  # [k, c + 1]
+        loss = self.marginal_likelihood(loss_antecedent_scores, loss_antecedent_labels)
+        loss += self.mention_loss_ratio * self.bce_loss(candidate_mention_scores,
                                                         (candidate_labels > 0).float())
                                                         # gold_mention_span)
-            return loss, prediction 
+        if mode == "train": 
+            return loss
         else:
-            return top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
+            mention_to_predict = torch.sigmoid(candidate_mention_scores)
+            mention_to_predict = mention_to_predict > self.model_config.threshold 
+            mention_to_gold = gold_mention_span 
+            return loss, loss_antecedent_scores, mention_to_predict, mention_to_gold  
 
     def marginal_likelihood(self, antecedent_scores, antecedent_labels):
         """
@@ -274,7 +277,7 @@ class CorefQA(BertPreTrainedModel):
         span_emb = torch.cat([span_start_emb, span_end_emb], dim=-1)
         return span_emb
 
-    def get_candidate_labels(self, candidate_starts, candidate_ends, labeled_starts, labeled_ends, labels):
+    def get_candidate_labels(self, candidate_starts, candidate_ends, labeled_starts, labeled_ends, labels=None):
         """
             method to get golden cluster id of candidate spans
         Args:
@@ -292,10 +295,11 @@ class CorefQA(BertPreTrainedModel):
         same_end = labeled_ends.unsqueeze(1) == candidate_ends.unsqueeze(0)
         # [num_mentions, num_candidates]
         same_span = torch.logical_and(same_start, same_end)
+        
         # [1, num_candidates]
         candidate_labels = torch.matmul(labels.unsqueeze(0).float(), same_span.float())
         candidate_labels = candidate_labels.long()
-        return candidate_labels.squeeze(0)
+        return candidate_labels 
 
     def get_question_token_ids(self, sentence_map, flattened_input_ids, flattened_input_mask, span_start, span_end,
                                return_offset=False):
