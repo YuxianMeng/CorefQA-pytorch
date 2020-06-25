@@ -13,7 +13,7 @@ import torch
 from typing import List
 
 
-from torch.utils.data import TensorDataset, DataLoader, SequentialSampler, Dataset
+from torch.utils.data import DataLoader, SequentialSampler, Dataset
 from data_loader.conll_data_processor import prepare_conll_dataset, CoNLLCorefResolution
 
 
