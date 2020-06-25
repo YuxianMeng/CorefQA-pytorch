@@ -17,11 +17,14 @@ import argparse
 import numpy as np
 import torch 
 
+
+import data_preprocess.conll as conll 
 from config.load_config import Config
+from transformers.modeling import BertConfig
 from data_loader.conll_dataloader import CoNLLDataLoader 
 from model.corefqa import CorefQA
-from module.optimization import AdamW, warmup_linear
-from transformers.modeling import BertConfig
+from module import metrics 
+from module.optimization import AdamW, warmup_linear 
 
 
 try:
@@ -49,7 +52,6 @@ def args_parser():
     parser.add_argument("--config_name", default="spanbert_base", type=str)
     parser.add_argument("--data_dir", default=None, type=str)
     parser.add_argument("--bert_model", default=None, type=str,)
-    parser.add_argument("--checkpoint", default=100, type=int)
     parser.add_argument("--do_eval", default=bool, type=bool)
     parser.add_argument("--lr", default=5e-5, type=float)
     parser.add_argument("--eval_per_epoch", default=10, type=int) 
@@ -59,7 +61,7 @@ def args_parser():
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=3006)
     parser.add_argument("--n_gpu", type=int, default=1)
-    parser.add_argument("--export_model", type=bool, default=False)
+    parser.add_argument("--save_model", type=bool, default=False)
     parser.add_argument("--fp16_opt_level", type=str,default="O3",
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
         "See details at https://nvidia.github.io/apex/amp.html",) 
@@ -98,7 +100,7 @@ def load_data(config, data_sign="conll"):
     dev_dataloader = dataloader.get_dataloader("dev")
     test_dataloader = dataloader.get_dataloader("test")
 
-    return train_dataloader, dev_dataloader, test_dataloader, 
+    return train_dataloader, dev_dataloader, test_dataloader 
 
 
 def load_model(config):
@@ -156,6 +158,13 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
     nb_tr_examples = 0
     nb_tr_steps = 0
     global_step = 0
+
+    best_dev_average_f1 = 0 
+    best_dev_summary_dict = None 
+
+    test_average_f1_when_dev_best = 0 
+    test_summary_dict_when_dev_best = None 
+
     start_time = time.time()
     num_train_optimization_steps = len(train_dataloader) // config.gradient_accumulation_steps * config.num_train_epochs
     train_batches = [batch for batch in train_dataloader]
@@ -225,42 +234,73 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
                 logger.info('Epoch: {}, Step: {} / {}, used_time = {:.2f}s, loss = {:.6f}'.format(
                     epoch, step + 1, len(train_batches), time.time() - start_time, tr_loss / nb_tr_steps))
 
-                save_model = False
                 if config.do_eval:
-                    result, _, _ = evaluate(config, model, device, dev_dataloader, test_dataloader, n_gpu)
-                model.train()
-                result['global_step'] = global_step
-                result['epoch'] = epoch
-                result['learning_rate'] = config.lr
-                result['batch_size'] = config.train_batch_size
+                    dev_summary_eval_dict, dev_average_f1 = evaluate(config, model, device, dev_dataloader, n_gpu, eval_sign="dev")
 
-                if save_model:
-                    model_to_save = model.module if hasattr(model, 'module') else model
-                    output_model_file = os.path.join(config.output_dir, WEIGHTS_NAME)
-                    output_config_file = os.path.join(config.output_dir, CONFIG_NAME)
-                    torch.save(model_to_save.state_dict(), output_model_file)
-                    model_to_save.config.to_json_file(output_config_file)
-                    tokenizer.save_vocabulary(config.output_dir)
-                    if best_result:
+                    if dev_average_f1 > best_dev_average_f1:
+                        best_dev_average_f1 = dev_average_f1 
+                        best_dev_summary_dict = dev_summary_eval_dict 
+
+                        if conifg.save_model:
+                            model_to_save = model.module if hasattr(model, "module") else model 
+                            output_model_file = os.path.join(config.output_dir, "{}_{}.checkpoint".format(str(epoch), str(step+1)))
+                            output_config_file = os.path.join(config.output_dir, "{}_{}.conf".format(str(epoch), str(step+1)))
+                            torch.save(model_to_save.state_dict(), output_model_file)
+                            tokenizer.save_vocabulary(config.output_dir)
+
+                        test_summary_dict_when_dev_best, test_average_f1_whem_dev_best = evaluate(config, model, device, test_dataloader, n_gpu, eval_sign="test")
+                        
                         with open(os.path.join(config.output_dir, "eval_results.txt"), "w") as writer:
-                            for key in sorted(best_result.keys()):
-                                writer.write("%s = %s\n" % (key, str(best_result[key])))
+                            writer.write("Dev RESULTS: \n")
+                            for key in sorted(best_dev_summary_dict.keys()):
+                                writer.write("Dev: %s = %s\n" % (key, str(best_dev_summary_dict[key])))
+                            writer.write("DEV Average (conll) F1 : %s" % (str(best_dev_average_f1)))
+                            writer.write("="*10 + "\n")
+                            writer.write("Test RESULTS: \n")
+                            for key in sorted(test_summary_dict_when_dev_best.keys()):
+                                writer.write("Test: %s = %s\n" % (key, str(test_summary_dict_when_dev_best[key])))
+                            writer.write("TEST Average (conll) F1 : %s" % (str(test_average_f1_when_dev_best))) 
 
 
-
-def evaluate(config, model, device, dev_dataloader, test_dataloader, n_gpu, eval_sign="dev"):
+def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", official_stdout=False):
     model_object.eval()
 
-    eval_loss = 0 
-    start_pred_lst = []
-    end_pred_lst = []
-    span_pred_lst = []
-    mask_lst = []
-    start_gold_lst = []
-    end_gold_lst = []
-    span_gold_lst = []
+    print("###"*20)
+    print("="*8 + "Evaluate {} dataset".format(eval_sign) + "="*8)
+    gold_cluster = []
+    pred_cluster = []
+    coref_prediction = {}
+    coref_evaluator = metrics.CorefEvaluator()
 
-    return average_loss, eval_accuracy, eval_precision, eval_recall, eval_f1  
+    # top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
+    for case_idx, case_feature in enumerate(dataloader):
+        doc_idx, sentence_map, subtoken_map, input_ids, input_mask = case_feature["doc_idx"].squeeze(0), \
+            case_feature["sentence_map"].squeeze(0), case_feature["flattened_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_input_mask"].view(-1, config.sliding_window_size)
+
+        gold_cluster_ids = case_feature["cluster_ids"].squeeze(0)
+
+        pred_cluster_ids = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, \
+            input_ids=input_ids, input_mask=input_mask)
+
+        coref_prediction[doc_idx] = pred_cluster_ids 
+        coref_evaluator.update(pred_cluster_ids, gold_cluster_ids, mention_to_predict, mention_to_gold)
+
+    summary_dict = {}
+    conll_results = conll.evaluate_conll(config.eval_path, coref_prediction, official_stdout)
+    average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
+    summary_dict["Average F1 (conll)"] = average_f1 
+    print("Average F1 (conll) : {:.2f}%".format(average_f1))
+
+    p, r, f = coref_evaluator.get_prf()
+    summary_dict["Average F1 (py)"] = f 
+    print("Average F1 (py): {:.2f}%".format(f * 100))
+    summary_dict["Average precision (py)"] = p 
+    print("Average precision (py): {:.2f}%".format(p * 100))
+    summary_dict["Average recall (py)"] = r 
+    print("Average recall (py): {:.2f}%".format(r * 100))
+    print("###"*20)
+
+    return summary_dict, average_f1 
 
 
 def merge_config(args_config):
@@ -268,7 +308,6 @@ def merge_config(args_config):
     config_dict = yaml.safe_load(open(config_file_path))
     config = Config(config_dict[args_config.config_name])
     config.update_args(args_config)
-    # config.print_config()
     return config 
 
 
@@ -286,6 +325,7 @@ def main():
     train_dataloader, dev_dataloader, test_dataloader = load_data(config, data_sign="conll")
     model, optimizer, sheduler, device, n_gpu = load_model(config)
     train(model, optimizer, sheduler, train_dataloader, dev_dataloader, test_dataloader, config, device, n_gpu) 
+
 
 
 

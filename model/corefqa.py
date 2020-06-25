@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*- 
 
 
-# author: xiaoy li
+# author: yuxian meng 
 # description:
 # corefqa model 
 
@@ -193,15 +193,19 @@ class CorefQA(BertPreTrainedModel):
         # (k, c)
         pairwise_labels = torch.logical_and(same_cluster_indicator, (topk_span_labels > 0).unsqueeze(-1))
         dummy_labels = torch.logical_not(torch.any(pairwise_labels, dim=1, keepdims=True))  # [k, 1]
-        loss_antecedent_labels = torch.cat([dummy_labels, pairwise_labels], 1).long()  # [k, c + 1]
-        dummy_scores = torch.zeros([k, 1]).to(loss_antecedent_labels.device)
-        loss_antecedent_scores = torch.cat([dummy_scores, cluster_mention_scores], 1)  # [k, c + 1]
-        loss = self.marginal_likelihood(loss_antecedent_scores, loss_antecedent_labels)
-        loss += self.mention_loss_ratio * self.bce_loss(candidate_mention_scores,
+        
+
+        if span_starts is not None and span_ends is not None and cluster_ids is not None:
+            loss_antecedent_labels = torch.cat([dummy_labels, pairwise_labels], 1).long()  # [k, c + 1]
+            dummy_scores = torch.zeros([k, 1]).to(loss_antecedent_labels.device)
+            loss_antecedent_scores = torch.cat([dummy_scores, cluster_mention_scores], 1)  # [k, c + 1]
+            loss = self.marginal_likelihood(loss_antecedent_scores, loss_antecedent_labels)
+            loss += self.mention_loss_ratio * self.bce_loss(candidate_mention_scores,
                                                         (candidate_labels > 0).float())
                                                         # gold_mention_span)
-        return loss
-        # return prediction, loss
+            return loss, prediction 
+        else:
+            return top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
 
     def marginal_likelihood(self, antecedent_scores, antecedent_labels):
         """
