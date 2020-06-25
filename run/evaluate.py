@@ -106,8 +106,6 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="test", 
     model_object.eval()
     print("###"*20)
     print("="*8 + "Evaluate {} dataset".format(eval_sign) + "="*8)
-    gold_cluster = []
-    pred_cluster = []
     coref_prediction = {}
     coref_evaluator = metrics.CorefEvaluator()
 
