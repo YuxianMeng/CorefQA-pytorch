@@ -6,9 +6,11 @@ export PYTHONPATH="$PYTHONPATH:/mnt/data/CorefQA-pytorch"
 export TPU_IP_ADDRESS=10.173.250.154
 export XRT_TPU_CONFIG="tpu_worker;0;$TPU_IP_ADDRESS:8470"
 
+echo ${TPU_IP_ADDRESS} 
+echo ${XRT_TPU_CONFIG}
 
 
-EXP_ID=22_1
+EXP_ID=26_22_23
 FOLDER_PATH=/mnt/data/CorefQA-pytorch
 CONFIG_PATH=${FOLDER_PATH}/config/gpu_spanbert.yml
 DATA_PATH=/mnt/data/tpu-data/data
@@ -16,7 +18,7 @@ BERT_PATH=/mnt/data/ckpt/spanbert_base
 output_path=/mnt/data/ckpt/spanbert_base
 
 
-exp_id=2020.06.24_morn
+exp_id=2020.06.26_env
 config_name=spanbert_base
 learning_rate=3e-5
 dropout=0.2
@@ -26,10 +28,10 @@ warmup_proportion=-1
 gradient_accumulation_step=1
 seed=2333
 n_gpu=1
-mention_chunk_size=15
+mention_chunk_size=200000
 
 
-python3 ${FOLDER_PATH}/run/train.py \
+nohup python3 ${FOLDER_PATH}/run/train.py \
 --n_gpu ${n_gpu} \
 --mention_chunk_size ${mention_chunk_size} \
 --config_path ${CONFIG_PATH} \
@@ -42,5 +44,5 @@ python3 ${FOLDER_PATH}/run/train.py \
 --num_train_epochs ${num_train_epoch} \
 --seed ${seed} \
 --output_dir ${output_path} \
---tpu 
+--tpu > /mnt/data/CorefQA-pytorch/${EXP_ID}.txt
 
