@@ -1,6 +1,5 @@
 spanbert_base:
   bert_config_file: /data/nfsdata/nlp/BERT_BASE_DIR/cased_L-12_H-768_A-12/bert_config.json
-  dropout_rate: 0.3
   span_ratio: 0.2
   max_candidate_num: 3900
   max_antecedent_num: 50
@@ -22,7 +21,11 @@ spanbert_base:
   save_checkpoints_steps: 500
   init_checkpoint: /dev/shm/xiaoya/wuwei_spanbert/model.ckpt
   train_file: /data/nfs/wuwei/study/CorefQA/data/train.english.tfrecord
+  dev_conll_file: /dev/shm/xiaoya/data/dev.english.v4_gold_conll
+  test_conll_file: /dev/shm/xiaoya/data/test.english.v4_gold_conll
 
+  mention_threshold: 0.5
+  mention_loss_ratio: 0.7
   bert_init_lr: 0.00001
   task_init_lr: 0.00001
   bert_opt: adam_weight_decay
@@ -32,7 +35,6 @@ spanbert_base:
 
 spanbert_large:
   bert_config_file: /data/nfsdata/nlp/BERT_BASE_DIR/cased_L-12_H-768_A-12/bert_config.json
-  dropout_rate: 0.3
   span_ratio: 0.2
   max_candidate_num: 3900
   max_antecedent_num: 50
@@ -54,7 +56,11 @@ spanbert_large:
   save_checkpoints_steps: 500
   init_checkpoint: /dev/shm/xiaoya/wuwei_spanbert/model.ckpt
   train_file: /data/nfs/wuwei/study/CorefQA/data/train.english.tfrecord
+  dev_conll_file: /dev/shm/xiaoya/data/dev.english.v4_gold_conll
+  test_conll_file: /dev/shm/xiaoya/data/test.english.v4_gold_conll
 
+  mention_threshold: 0.5
+  mention_loss_ratio: 0.7
   bert_init_lr: 0.00001
   task_init_lr: 0.00001
   bert_opt: adam_weight_decay

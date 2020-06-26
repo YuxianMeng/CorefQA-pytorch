@@ -28,19 +28,21 @@ from module.optimization import AdamW, warmup_linear
 from module import model_utils
 
 
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+                    datefmt='%m/%d/%Y %H:%M:%S',
+                    level=logging.INFO)
+
+logger = logging.getLogger(__name__)
+
+
 try:
     import torch_xla 
     import torch_xla.core.xla_model as xm 
 except:
-    print("=*="*10)
-    print("IMPORT torch_xla when running on the TPU machine. ")
-    print("=*="*10)
-
-
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-                    datefmt='%m/%d/%Y %H:%M:%S',
-                    level=logging.INFO)
-logger = logging.getLogger(__name__)
+    logger.info("=*="*10)
+    logger.info("DONOT ON TPU Now !!! ")
+    logger.info("IMPORT torch_xla when running on the Google Cloud TPU Pod. ")
+    logger.info("=*="*10)
 
 
 
@@ -51,10 +53,9 @@ def args_parser():
     # requires parameters 
     parser.add_argument("--config_path", default="/home/lixiaoya/bert.yaml", type=str)
     parser.add_argument("--config_name", default="spanbert_base", type=str)
-    parser.add_argument("--eval_path", default="/home/lixiaoya/", type=str)
     parser.add_argument("--data_dir", default=None, type=str)
     parser.add_argument("--bert_model", default=None, type=str,)
-    parser.add_argument("--do_eval", default=True, type=bool)
+    parser.add_argument("--do_eval", default=False, type=bool)
     parser.add_argument("--lr", default=5e-5, type=float)
     parser.add_argument("--eval_per_epoch", default=10, type=int) 
     parser.add_argument("--warmup_proportion", default=0.1, type=float)
@@ -63,22 +64,17 @@ def args_parser():
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=3006)
     parser.add_argument("--n_gpu", type=int, default=1)
-    parser.add_argument("--save_model", type=bool, default=True)
+    parser.add_argument("--save_model", type=bool, default=False)
     parser.add_argument("--fp16_opt_level", type=str,default="O3",
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
         "See details at https://nvidia.github.io/apex/amp.html",) 
     parser.add_argument("--output_dir", type=str, default="/home/lixiaoya/output")
-    parser.add_argument("--dropout", type=float, default=0.2)  # todo(yuxian) not used
-    parser.add_argument("--data_cache", type=bool, default=False,
-                        help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-                        "0 (default value): dynamic loss scaling.\n"
-                        "Positive power of 2: static loss scaling value.\n") 
+    parser.add_argument("--data_cache", type=bool, default=False)
     parser.add_argument('--fp16', action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
     parser.add_argument("--loss_scale", type=float, default=1.0, )
     parser.add_argument('--tpu', action='store_true', help="Whether to use tpu machine")
     parser.add_argument('--debug', action='store_true', help="print some debug information.")
-    parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--mention_chunk_size", type=int, default=3, help="use mention chunk to reduce memory usage")
 
     args = parser.parse_args()
@@ -336,6 +332,7 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
     coref_prediction = {}
     subtoken_map_dict = {}
     coref_evaluator = metrics.CorefEvaluator()
+    eval_conll_file_path = config.dev_conll_path if eval_sign == "dev" else config.test_conll_path 
 
     # top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
     for case_idx, case_feature in enumerate(dataloader):
@@ -404,11 +401,15 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
 
         coref_prediction[case_doc_key] = predicted_clusters
         subtoken_map_dict[case_doc_key] = case_feature["subtoken_map"]
+        ## print("check the results : ")
+        ## print(case_feature["subtoken_map"])
+        ## print(predicted_clusters)
+        ## exit()
 
         # coref_evaluator.update(pred_cluster_ids, gold_cluster_ids, mention_to_predict, mention_to_gold)
 
     summary_dict = {}
-    conll_results = conll.evaluate_conll(config.eval_path, coref_prediction, subtoken_map_dict, official_stdout)
+    conll_results = conll.evaluate_conll(eval_conll_file_path, coref_prediction, subtoken_map_dict, official_stdout)
     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
     summary_dict["Average F1 (conll)"] = average_f1
     print("@"*40)
@@ -416,7 +417,6 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
     print("CoNLL Results: ")
     print(conll_results)
     print("@"*40)
-    exit()
 
 
     p, r, f = coref_evaluator.get_prf()
@@ -436,6 +436,11 @@ def merge_config(args_config):
     config_dict = yaml.safe_load(open(config_file_path))
     config = Config(config_dict[args_config.config_name])
     config.update_args(args_config)
+    logger.info("=" * 10 + "... Model Configs ..." + "=" * 10) 
+    logger.info("{}".format(config.to_json_string()))
+    bert_config = Config.from_json_file(os.path.join(args_config.bert_model, "config.json"))
+    logger.info("=" * 10 + "... PRETRAINED Model Configs ..." + "=" * 10) 
+    logger.info("{}".format(bert_config.to_json_string()))
     return config 
 
 

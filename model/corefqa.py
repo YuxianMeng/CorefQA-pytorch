@@ -24,14 +24,14 @@ class CorefQA(BertPreTrainedModel):
 
         # other configs, todo(yuxian)
         self.pad_idx = 0
-        self.max_span_width = 3
-        self.span_ratio = 0.1
-        self.max_candidate_num = 10
-        self.max_antecedent_num = 5
-        self.sliding_window_size = 50
-        self.mention_start_idx = 7
-        self.mention_end_idx = 70
-        self.mention_loss_ratio = 0.1
+        self.max_span_width = self.model_config.max_span_width 
+        self.span_ratio = self.model_config.span_ratio 
+        self.max_candidate_num = self.model_config.max_candidate_num 
+        self.max_antecedent_num = self.model_config.max_antecedent_num
+        self.sliding_window_size = self.model_config.sliding_window_size 
+        self.mention_start_idx = self.model_config.mention_start_idx 
+        self.mention_end_idx = self.model_config.mention_end_idx
+        self.mention_loss_ratio = self.model_config.mention_loss_ratio 
 
         self.apply(self.init_bert_weights)
         # mention proposal 
@@ -318,7 +318,7 @@ class CorefQA(BertPreTrainedModel):
         if mode == "train":
             return link_loss
         mention_to_predict = torch.sigmoid(candidate_mention_scores)
-        mention_to_predict = mention_to_predict > self.model_config.threshold
+        mention_to_predict = mention_to_predict > self.model_config.mention_threshold
         mention_to_gold = gold_mention_span
         return link_loss, loss_antecedent_scores, mention_to_predict, mention_to_gold
 
