@@ -20,18 +20,19 @@ bert_model = "/dev/shm/xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12"
 bert_config = BertConfig.from_json_file(os.path.join(bert_model, "config.json"))
 config = None
 device = 0
-MODEL = CorefQA(bert_config, config, device)
+MODEL: CorefQA = CorefQA(bert_config, config, device)
 
 
-def test_forward_with_fake_data():
+def test_mention_proposal():
     """test forward"""
-    input_ids = torch.LongTensor([[200, 200, 200, 300, 300]]).long()  # [num_window, ]
+    window_input_ids = torch.LongTensor([[200, 200, 200, 300, 300]]).long()  # [num_window, ]
     sentence_map = torch.LongTensor([0, 0, 0, 1, 1])
-    input_mask = torch.LongTensor([0, 1, 2, 3, 4])
+    window_masked_ids = torch.LongTensor([0, 1, 2, 3, 4])
     span_starts = torch.LongTensor([0])
     span_ends = torch.LongTensor([1])
     cluster_ids = torch.LongTensor([1])
-    y = MODEL(doc_idx=None, sentence_map=sentence_map, subtoken_map=None, input_ids=input_ids, input_mask=input_mask,
+    y = MODEL(sentence_map=sentence_map, subtoken_map=None,
+              window_input_ids=window_input_ids, window_masked_ids=window_masked_ids,
               gold_mention_span=None, token_type_ids=None, attention_mask=None,
               span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
     print(y)
@@ -88,16 +89,37 @@ def test_forward_with_conll_data():
     for test_example in test_dataloader:
         print("=*=" * 10)
 
-        y = MODEL(
-            doc_idx=test_example["doc_idx"].squeeze(0),
+        (proposal_loss, sentence_map, input_ids, masked_input_ids,
+        candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
+        topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) = MODEL(
             sentence_map=test_example["sentence_map"].squeeze(0),
             subtoken_map=None,
-            input_ids=test_example["flattened_input_ids"].view(-1, config.sliding_window_size),
-            input_mask=test_example["flattened_input_mask"].view(-1, config.sliding_window_size),
+            window_input_ids=test_example["flattened_input_ids"].view(-1, config.sliding_window_size),
+            window_masked_ids=test_example["flattened_input_mask"].view(-1, config.sliding_window_size),
             gold_mention_span=test_example["mention_span"].squeeze(0),
             token_type_ids=None, attention_mask=None,
             span_starts=test_example["span_start"].squeeze(0),
             span_ends=test_example["span_end"].squeeze(0),
             cluster_ids=test_example["cluster_ids"].squeeze(0),
         )
-        print(y)
+
+        link_loss = MODEL.batch_qa_linking(
+            sentence_map=sentence_map,
+            window_input_ids=input_ids,
+            window_masked_ids=masked_input_ids,
+            token_type_ids=None,
+            attention_mask=None,
+            candidate_starts=candidate_starts,
+            candidate_ends=candidate_ends,
+            candidate_labels=candidate_labels,
+            candidate_mention_scores=candidate_mention_scores,
+            topk_span_starts=topk_span_starts,
+            topk_span_ends=topk_span_ends,
+            topk_span_labels=topk_span_labels,
+            topk_mention_scores=topk_mention_scores,
+            origin_k=topk_span_starts.shape[0],
+            gold_mention_span=None,
+            recompute_mention_scores=True
+        )
+
+        print(link_loss)
