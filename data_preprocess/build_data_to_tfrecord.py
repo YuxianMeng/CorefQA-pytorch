@@ -9,6 +9,7 @@
 
 将conll的v4_gold_conll文件格式转成模型训练所需的jsonlines数据格式
 """
+
 import argparse
 import json
 import logging
