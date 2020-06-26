@@ -194,15 +194,15 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
         for step, batch in enumerate(train_dataloader):
             ##if n_gpu == 1:
             ##    batch = tuple(t.to(device) for t in batch)
-            doc_idx, sentence_map,subtoken_map, input_ids, input_mask, gold_mention_span, token_type_ids, attention_mask, \
+            doc_idx, sentence_map,subtoken_map, window_input_ids, window_masked_ids, gold_mention_span, token_type_ids, attention_mask, \
                 span_starts, span_ends, cluster_ids = batch["doc_idx"].squeeze(0), batch["sentence_map"].squeeze(0), None, \
-                batch["flattened_input_ids"].view(-1, config.sliding_window_size), batch["flattened_input_ids_type"].view(-1, config.sliding_window_size), \
+                batch["flattened_window_input_ids"].view(-1, config.sliding_window_size), batch["flattened_window_masked_ids"].view(-1, config.sliding_window_size), \
                 batch["mention_span"].squeeze(0), None, None, batch["span_start"].squeeze(0), batch["span_end"].squeeze(0), batch["cluster_ids"].squeeze(0)
             doc_idx= doc_idx.to(device)
             sentence_map= sentence_map.to(device)
             # subtoken_map = subtoken_map.to(device)
-            input_ids = input_ids.to(device)
-            input_mask = input_mask.to(device)
+            window_input_ids = window_input_ids.to(device)
+            window_masked_ids = window_masked_ids.to(device)
             gold_mention_span = gold_mention_span.to(device)
             span_starts = span_starts.to(device)
             span_ends = span_ends.to(device)
@@ -211,13 +211,13 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
             if config.debug and step % 2 == 0:
                 print("INFO: The {} epoch training process {}.".format(epoch, step))
 
-            # loss = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, input_ids=input_ids, input_mask=input_mask, \
+            # loss = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, window_input_ids=window_input_ids, window_masked_ids=window_masked_ids, \
             #     gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
 
             loss = 0.0
             (proposal_loss, sentence_map, window_input_ids, window_masked_ids,
              candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
-             topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, input_ids=input_ids, input_mask=input_mask,
+             topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) = model(sentence_map=sentence_map, subtoken_map=subtoken_map, window_input_ids=window_input_ids, window_masked_ids=window_masked_ids,
                                                                                               gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
             proposal_loss /= config.gradient_accumulation_steps
             tr_loss += proposal_loss.item()
@@ -266,7 +266,7 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
                 epoch_loss += link_loss.item()
 
             print(epoch_loss/(step+1))
-            nb_tr_examples += input_ids.size(0)
+            nb_tr_examples += window_input_ids.size(0)
             nb_tr_steps += 1
 
             if config.tpu:
@@ -325,18 +325,18 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
 
     # top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
     for case_idx, case_feature in enumerate(dataloader):
-        doc_idx, sentence_map, subtoken_map, input_ids, input_mask = case_feature["doc_idx"].squeeze(0), \
-            case_feature["sentence_map"].squeeze(0), case_feature["flattened_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_input_ids_type"].view(-1, config.sliding_window_size)
+        doc_idx, sentence_map, subtoken_map, window_input_ids, window_masked_ids = case_feature["doc_idx"].squeeze(0), \
+            case_feature["sentence_map"].squeeze(0), case_feature["flattened_window_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_window_masked_ids"].view(-1, config.sliding_window_size)
 
         gold_mention_span, token_type_ids, attention_mask = case_feature["mention_span"].squeeze(0), None, None
         span_starts, span_ends, gold_cluster_ids = case_feature["span_start"].squeeze(0), case_feature["span_end"].squeeze(0), case_feature["cluster_ids"].squeeze(0)
 
-        doc_idx, sentence_map,input_ids,input_mask,gold_mention_span,span_starts,span_ends, gold_cluster_ids = doc_idx.to(device), sentence_map.to(device), \
-            input_ids.to(device), input_mask.to(device), gold_mention_span.to(device), span_starts.to(device), span_ends.to(device), gold_cluster_ids.to(device)
+        doc_idx, sentence_map,window_input_ids,window_masked_ids,gold_mention_span,span_starts,span_ends, gold_cluster_ids = doc_idx.to(device), sentence_map.to(device), \
+            window_input_ids.to(device), window_masked_ids.to(device), gold_mention_span.to(device), span_starts.to(device), span_ends.to(device), gold_cluster_ids.to(device)
 
         with torch.no_grad():
-            loss, pred_cluster_ids, mention_to_predict, mention_to_gold = model_object(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, \
-                input_ids=input_ids, input_mask=input_mask, gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, \
+            loss, pred_cluster_ids, mention_to_predict, mention_to_gold = model_object(sentence_map=sentence_map, subtoken_map=subtoken_map, \
+                window_input_ids=window_input_ids, window_masked_ids=window_masked_ids, gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, \
                 attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=gold_cluster_ids, mode="eval")
 
         pred_cluster_ids = pred_cluster_ids.detach().cpu().numpy().tolist()

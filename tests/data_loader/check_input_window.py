@@ -59,6 +59,9 @@ if __name__ == "__main__":
         token_windows.append(one_window_token)
         mask_windows.append(one_window_mask)
 
+    print("sentence_map:", tokenized_document['sentence_map'])
+    print("subtoken_map:", tokenized_document['subtoken_map'])
+
     token_windows = token_windows 
     mask_windows = mask_windows 
     span_start, span_end, mention_span, cluster_ids = flatten_clusters(tokenized_document['clusters'])
