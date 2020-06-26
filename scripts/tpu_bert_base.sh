@@ -26,10 +26,12 @@ warmup_proportion=-1
 gradient_accumulation_step=1
 seed=2333
 n_gpu=1
+mention_chunk_size=15
 
 
 python3 ${FOLDER_PATH}/run/train.py \
 --n_gpu ${n_gpu} \
+--mention_chunk_size ${mention_chunk_size} \
 --config_path ${CONFIG_PATH} \
 --config_name ${config_name} \
 --data_dir ${DATA_PATH} \
@@ -40,7 +42,5 @@ python3 ${FOLDER_PATH}/run/train.py \
 --num_train_epochs ${num_train_epoch} \
 --seed ${seed} \
 --output_dir ${output_path} \
---dropout ${dropout} \
---tpu \
---debug 
+--tpu 
 

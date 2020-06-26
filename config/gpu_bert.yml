@@ -1,6 +1,5 @@
 bert_base:
   bert_config_file: /xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12/bert_config.json
-  dropout_rate: 0.3
   span_ratio: 0.2
   max_candidate_num: 30
   max_antecedent_num: 20
@@ -22,7 +21,11 @@ bert_base:
   save_checkpoints_steps: 500
   init_checkpoint: /xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12/bert_model.ckpt
   train_file: /xiaoya/data/train.english.tfrecord
+  dev_conll_file: /dev/shm/xiaoya/data/dev.english.v4_gold_conll
+  test_conll_file: /dev/shm/xiaoya/data/test.english.v4_gold_conll
 
+  mention_threshold: 0.5
+  mention_loss_ratio: 0.7
   bert_init_lr: 0.00001
   task_init_lr: 0.00001
   bert_opt: adam_weight_decay
@@ -32,7 +35,6 @@ bert_base:
 
 bert_large:
   bert_config_file: /xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12/bert_config.json
-  dropout_rate: 0.3
   span_ratio: 0.2
   max_candidate_num: 30
   max_antecedent_num: 20
@@ -54,7 +56,11 @@ bert_large:
   save_checkpoints_steps: 500
   init_checkpoint: /xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12/bert_model.ckpt
   train_file: /xiaoya/data/train.english.tfrecord
+  dev_conll_file: /dev/shm/xiaoya/data/dev.english.v4_gold_conll
+  test_conll_file: /dev/shm/xiaoya/data/test.english.v4_gold_conll
 
+  mention_threshold: 0.5
+  mention_loss_ratio: 0.7
   bert_init_lr: 0.00001
   task_init_lr: 0.00001
   bert_opt: adam_weight_decay
