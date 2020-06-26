@@ -186,7 +186,7 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
             ##    batch = tuple(t.to(device) for t in batch)
             doc_idx, sentence_map,subtoken_map, input_ids, input_mask, gold_mention_span, token_type_ids, attention_mask, \
                 span_starts, span_ends, cluster_ids = batch["doc_idx"].squeeze(0), batch["sentence_map"].squeeze(0), None, \
-                batch["flattened_input_ids"].view(-1, config.sliding_window_size), batch["flattened_input_mask"].view(-1, config.sliding_window_size), \
+                batch["flattened_input_ids"].view(-1, config.sliding_window_size), batch["flattened_input_ids_type"].view(-1, config.sliding_window_size), \
                 batch["mention_span"].squeeze(0), None, None, batch["span_start"].squeeze(0), batch["span_end"].squeeze(0), batch["cluster_ids"].squeeze(0)
             doc_idx= doc_idx.to(device)
             sentence_map= sentence_map.to(device)
@@ -275,7 +275,7 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
     # top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
     for case_idx, case_feature in enumerate(dataloader):
         doc_idx, sentence_map, subtoken_map, input_ids, input_mask = case_feature["doc_idx"].squeeze(0), \
-            case_feature["sentence_map"].squeeze(0), case_feature["flattened_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_input_mask"].view(-1, config.sliding_window_size)
+            case_feature["sentence_map"].squeeze(0), case_feature["flattened_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_input_ids_type"].view(-1, config.sliding_window_size)
 
         gold_mention_span, token_type_ids, attention_mask = case_feature["mention_span"].squeeze(0), None, None 
         span_starts, span_ends, gold_cluster_ids = case_feature["span_start"].squeeze(0), case_feature["span_end"].squeeze(0), case_feature["cluster_ids"].squeeze(0)

@@ -31,7 +31,7 @@ class CoNLLDataset(Dataset):
             "sentence_map": torch.tensor(feature.sentence_map, dtype=torch.int64),
             "subtoken_map": torch.tensor(feature.subtoken_map, dtype=torch.int64),
             "flattened_input_ids": torch.tensor(feature.flattened_input_ids, dtype=torch.int64),
-            "flattened_input_mask": torch.tensor(feature.flattened_input_mask, dtype=torch.int64),
+            "flattened_input_ids_type": torch.tensor(feature.flattened_input_ids_type, dtype=torch.int64),
             "span_start": torch.tensor(feature.span_start, dtype=torch.int64),
             "span_end": torch.tensor(feature.span_end, dtype=torch.int64),
             "cluster_ids": torch.tensor(feature.cluster_ids, dtype=torch.int64),
