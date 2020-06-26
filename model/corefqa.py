@@ -9,7 +9,6 @@
 
 import torch
 import torch.nn as nn
-from more_itertools import chunked
 
 
 from transformers.modeling import BertPreTrainedModel, BertModel
@@ -41,8 +40,9 @@ class CorefQA(BertPreTrainedModel):
         self.mention_span_ffnn = nn.Linear(self.config.hidden_size * 2, 1)
 
         # cluster todo(yuxian): check是否应该和上面的参数不share
-        self.forward_qa_ffnn = nn.Linear(self.config.hidden_size * 2, 1)
-        self.backward_qa_ffnn = nn.Linear(self.config.hidden_size * 2, 1)
+        # self.forward_qa_ffnn = nn.Linear(self.config.hidden_size * 2, 1)
+        # self.backward_qa_ffnn = nn.Linear(self.config.hidden_size * 2, 1)
+        self.mention_link_ffnn = nn.Linear(self.config.hidden_size * 2, 1)
         self.bce_loss = torch.nn.BCEWithLogitsLoss()
 
     def forward(self, sentence_map, subtoken_map, window_input_ids, window_masked_ids, gold_mention_span=None, token_type_ids=None,
@@ -68,7 +68,7 @@ class CorefQA(BertPreTrainedModel):
         window_overlap_mask = (window_masked_ids >= 0).long()
         # flattened_input_ids = input_ids.view(-1)
         # flattened_input_mask = input_mask.view(-1)
-        # [num_windows, window_size, embed_size]
+        # [num_windows, window_size, embed_size] todo(yuxian) attention mask
         mention_sequence_output, _ = self.bert(window_input_ids, token_type_ids, attention_mask,
                                                output_all_encoded_layers=False)
         # [num_candidates], [num_candidates]
@@ -219,8 +219,8 @@ class CorefQA(BertPreTrainedModel):
         # [k, num_candidates, embed_size*2]
         batch_forward_candidate_embeddings = torch.cat([batch_forward_start_embeddings, batch_forward_end_embeddings],
                                                        dim=-1)
-        # [k, num_candidates]
-        batch_forward_mention_scores = self.mention_span_ffnn(batch_forward_candidate_embeddings).squeeze(-1)
+        # [k, num_candidates]  todo(yuxian): maybe add a loss here to make training more stable?
+        batch_forward_mention_scores = self.mention_link_ffnn(batch_forward_candidate_embeddings).squeeze(-1)
         # [k, c]
         batch_topc_forward_scores, batch_topc_forward_indices = torch.topk(batch_forward_mention_scores, k=c, dim=1)
         batch_topc_forward_starts = candidate_starts[batch_topc_forward_indices.view(-1)].view(k, c)
@@ -296,7 +296,7 @@ class CorefQA(BertPreTrainedModel):
                                                        batch_backward_end_embeddings.unsqueeze(1)],
                                                       dim=-1)
         # [k, c]
-        batch_backward_mention_scores = self.mention_span_ffnn(batch_backward_mention_embeddings).view(k, c)
+        batch_backward_mention_scores = self.mention_link_ffnn(batch_backward_mention_embeddings).view(k, c)
 
         # [k, c]
         cluster_mention_scores = (

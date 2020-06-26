@@ -15,7 +15,6 @@ from model.corefqa import CorefQA
 from data_loader.conll_dataloader import CoNLLDataLoader, CoNLLDataset
 from transformers import BertConfig
 
-
 bert_model = "/dev/shm/xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12"
 bert_config = BertConfig.from_json_file(os.path.join(bert_model, "config.json"))
 config = None
@@ -61,6 +60,24 @@ def test_get_question_tokens():
     assert (golden_question_tokens == question_tokens).all().item()
 
 
+def test_fast_get_question_tokens():
+    sentence_map = torch.Tensor([0, 0, 0, 1, 1]).long()
+    doc_ids = torch.Tensor([0, 1, 2, 3, 4]).long()
+    span_start = 0
+    span_end = 1
+    question_tokens, start, end = MODEL.fast_get_question_token_ids(
+        sentence_map=sentence_map,
+        doc_ids=doc_ids,
+        span_start=span_start,
+        span_end=span_end,
+        return_offset=True
+    )
+    golden_start, golden_end = 1, 2
+    golden_question_tokens = torch.Tensor([MODEL.mention_start_idx, 0, 1, MODEL.mention_end_idx, 2]).long()
+    assert (golden_question_tokens == question_tokens).all().item()
+    assert start.item() == golden_start and end.item() == golden_end
+
+
 def test_pad():
     tensors = [torch.LongTensor([[1, 2, 3], [1, 2, 3]]),
                torch.LongTensor([[1, 2], [1, 2]]),
@@ -82,6 +99,7 @@ def test_forward_with_conll_data():
         def __init__(self, ):
             self.data_dir = "/dev/shm/xiaoya/data"
             self.sliding_window_size = 128
+
     config = Config()
     print(config.data_dir)
     dataloader = CoNLLDataLoader(config)
@@ -90,8 +108,8 @@ def test_forward_with_conll_data():
         print("=*=" * 10)
 
         (proposal_loss, sentence_map, input_ids, masked_input_ids,
-        candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
-        topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) = MODEL(
+         candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
+         topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) = MODEL(
             sentence_map=test_example["sentence_map"].squeeze(0),
             subtoken_map=None,
             window_input_ids=test_example["flattened_input_ids"].view(-1, config.sliding_window_size),

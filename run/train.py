@@ -16,6 +16,7 @@ import logging
 import argparse  
 import numpy as np
 import torch
+from tqdm import tqdm
 
 import data_preprocess.conll as conll
 from config.load_config import Config
@@ -24,7 +25,7 @@ from data_loader.conll_dataloader import CoNLLDataLoader
 from model.corefqa import CorefQA
 from module import metrics
 from module.optimization import AdamW, warmup_linear
-from module import model_utils 
+from module import model_utils
 
 
 try:
@@ -192,8 +193,14 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
 
         if config.debug:
             print("INFO: start train the CorefQA Model.")
-        
-        for step, batch in enumerate(train_dataloader):
+        # if config.is_master:
+        logger.info(f'--- Starting epoch {epoch}/{int(config.num_train_epochs) - 1}')
+        # if self.multi_gpu:
+        #     torch.distributed.barrier()
+
+        # iter_bar = tqdm(train_dataloader, desc="-Iter", disable=config.params.local_rank not in [-1, 0])
+        iter_bar = tqdm(train_dataloader, desc="-Iter")
+        for step, batch in enumerate(iter_bar):
             ##if n_gpu == 1:
             ##    batch = tuple(t.to(device) for t in batch)
             sentence_map,subtoken_map, window_input_ids, window_masked_ids, gold_mention_span, token_type_ids, attention_mask, \
@@ -222,7 +229,6 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
                                                                                               gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
             proposal_loss /= config.gradient_accumulation_steps
             tr_loss += proposal_loss.item()
-            epoch_loss += proposal_loss.item()
             if config.mention_chunk_size:
                 backward_loss(optimizer=optimizer, fp16=config.fp16, loss=proposal_loss)
             else:
@@ -232,8 +238,7 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
             tr_loss += proposal_loss.item()
 
             # mention linking
-            print(len(set(topk_span_starts.tolist()) & set(span_starts.tolist())))
-            print(span_starts.shape[0])
+            # print(len(set(topk_span_starts.tolist()) & set(span_starts.tolist())), span_starts.shape[0])
             mention_num = topk_span_starts.shape[0]
             chunk_num = mention_num // config.mention_chunk_size
             for chunk_idx in range(chunk_num):
@@ -263,10 +268,10 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
                     backward_loss(optimizer=optimizer, loss=link_loss, fp16=config.fp16, retain_graph=False)
                 else:
                     loss += link_loss
+                item_loss += link_loss.item()
                 tr_loss += link_loss.item()
-                epoch_loss += link_loss.item()
+            epoch_loss += item_loss
 
-            print(epoch_loss/(step+1))
             nb_tr_examples += window_input_ids.size(0)
             nb_tr_steps += 1
 
@@ -312,7 +317,14 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
                             writer.write("Test RESULTS: \n")
                             for key in sorted(test_summary_dict_when_dev_best.keys()):
                                 writer.write("Test: %s = %s\n" % (key, str(test_summary_dict_when_dev_best[key])))
-                            writer.write("TEST Average (conll) F1 : %s" % (str(test_average_f1_when_dev_best))) 
+                            writer.write("TEST Average (conll) F1 : %s" % (str(test_average_f1_when_dev_best)))
+            iter_bar.update()
+            # current_lr = sheduler.get_lr()[0]
+            iter_bar.set_postfix({
+                'loss_cur': f'{item_loss:.3f}',
+                'loss_epoch:': f'{epoch_loss / (step+1):.3f}'
+            })
+        iter_bar.close()
 
 
 def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", official_stdout=False):
@@ -327,7 +339,7 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
 
     # top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
     for case_idx, case_feature in enumerate(dataloader):
-        case_doc_key = dataloader.dataset.features[case_idx].doc_idx 
+        case_doc_key = dataloader.dataset.features[case_idx].doc_idx
 
         sentence_map,subtoken_map, window_input_ids, window_masked_ids, gold_mention_span, token_type_ids, attention_mask, \
                 span_starts, span_ends, cluster_ids = case_feature["sentence_map"].squeeze(0), None, \
@@ -376,9 +388,9 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
                     mode="eval"
                 )
 
-                # loss_antecedent_scores: chunk-size * c+1 
+                # loss_antecedent_scores: chunk-size * c+1
                 all_chunk_lst.append(loss_antecedent_scores)
-            
+
             all_chunk_antecedent_scores = torch.cat(all_chunk_lst, 0)
             predicted_antecedents = torch.argmax(all_chunk_antecedent_scores, dim=-1)
 
