@@ -45,16 +45,14 @@ class CorefQA(BertPreTrainedModel):
         self.backward_qa_ffnn = nn.Linear(self.config.hidden_size * 2, 1)
         self.bce_loss = torch.nn.BCEWithLogitsLoss()
 
-    def forward(self, doc_idx, sentence_map, subtoken_map, input_ids, input_mask, gold_mention_span=None,
-                token_type_ids=None, attention_mask=None, span_starts=None, span_ends=None, cluster_ids=None, mode="train"):
+    def forward(self, sentence_map, subtoken_map, window_input_ids, window_masked_ids, gold_mention_span=None, token_type_ids=None,
+                attention_mask=None, span_starts=None, span_ends=None, cluster_ids=None):
         """
         forward
         Args:
-            doc_idx: [1]
             sentence_map: [num_tokens], each token's sentence index
             subtoken_map: [num_tokens], each token's ??? todo
-            input_ids: [num_windows, window_size]
-            input_mask: [num_windows, window_size]
+            window_masked_ids: [num_windows, window_size], mask those has appeared in previous window with negative.
             token_type_ids: [num_windows, window_size]
             attention_mask:
             span_starts: [num_spans], span start indices
@@ -66,17 +64,23 @@ class CorefQA(BertPreTrainedModel):
 
         """
         num_tokens = sentence_map.shape[0]
+        embed_size = self.config.hidden_size
+        window_overlap_mask = (window_masked_ids >= 0).long()
         # flattened_input_ids = input_ids.view(-1)
         # flattened_input_mask = input_mask.view(-1)
         # [num_windows, window_size, embed_size]
-        mention_sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask,
+        mention_sequence_output, _ = self.bert(window_input_ids, token_type_ids, attention_mask,
                                                output_all_encoded_layers=False)
-        # [num_candidates], [num_candidates]  todo(yuxian): 这里的candidate可能由于self.max_span_width的原因不能完全覆盖golden的candidates？
+        # [num_candidates], [num_candidates]
         candidate_starts, candidate_ends = self.get_candidate_spans(sentence_map)
         num_candidate_mentions = max(int(num_tokens * self.span_ratio), 1)
         k = min(self.max_candidate_num, num_candidate_mentions)
+        # [num_tokens]
+        doc2windows = self.doc_offsets2window_offsets(window_overlap_mask=window_overlap_mask)
+        # [num_tokens, embed_size]  todo(yuxian): average overlapped embedding may be better
+        doc_embeddings = mention_sequence_output.view(-1, embed_size)[doc2windows]
         # [num_candidates, embed_size]
-        candidates_embeddings = self.get_span_embeddings(mention_sequence_output.view(-1, self.config.hidden_size),
+        candidates_embeddings = self.get_span_embeddings(doc_embeddings,
                                                          candidate_starts,
                                                          candidate_ends)
         # [num_candidates]
@@ -99,15 +103,28 @@ class CorefQA(BertPreTrainedModel):
         # return (proposal_loss, sentence_map, input_ids, input_mask,
         #         candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
         #         topk_span_starts, topk_span_ends, topk_span_labels, top_mention_scores)
-        return (proposal_loss, sentence_map.detach(), input_ids.detach(), input_mask.detach(),
+        return (proposal_loss, sentence_map.detach(), window_input_ids.detach(), window_masked_ids.detach(),
                 candidate_starts.detach(), candidate_ends.detach(), candidate_labels.detach(), candidate_mention_scores.detach(),
                 topk_span_starts.detach(), topk_span_ends.detach(), topk_span_labels.detach(), top_mention_scores.detach())
+
+    @staticmethod
+    def doc_offsets2window_offsets(window_overlap_mask):
+        """
+        map from doc offsets to window offsets
+        Args:
+            window_overlap_mask: [num_window, window_size] 0 if this token(window_input_ids[i][j])
+            is also in previous window(window_input_ids[i-1])
+
+        Returns:
+            offsets: [num_tokens], offsets[i] is the first position that doc[i] appear in flattened window input ids.
+        """
+        return torch.where(window_overlap_mask.view(-1) > 0)[0]
 
     def batch_qa_linking(
         self,
         sentence_map,
-        input_ids,
-        input_mask,
+        window_input_ids,
+        window_masked_ids,
         token_type_ids,
         attention_mask,
         candidate_starts,
@@ -127,8 +144,8 @@ class CorefQA(BertPreTrainedModel):
 
         Args:
             sentence_map: [num_tokens], each token's sentence index
-            input_ids: [num_windows, window_size]
-            input_mask: [num_windows, window_size]
+            window_input_ids: [num_windows, window_size]
+            window_masked_ids: [num_windows, window_size], mask those has appeared in previous window with negative.
             token_type_ids: [num_windows, window_size]
             attention_mask:
             candidate_starts: [num_candidates]
@@ -146,36 +163,50 @@ class CorefQA(BertPreTrainedModel):
         Returns:
 
         """
+        embed_size = self.config.hidden_size
+        # [num_tokens]
+        doc2windows = self.doc_offsets2window_offsets(window_overlap_mask=(window_masked_ids >= 0).long())
+        doc_ids = window_input_ids.view(-1)[doc2windows]
         if recompute_mention_scores:
-            mention_sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask,
+            # [num_windows, window_size, embed_size]
+            mention_sequence_output, _ = self.bert(window_input_ids, token_type_ids, attention_mask,
                                                    output_all_encoded_layers=False)
+            # [num_tokens, embed_size]  todo(yuxian): average overlapped embedding may be better
+            doc_embeddings = mention_sequence_output.view(-1, embed_size)[doc2windows]
+
             # [num_candidates]
-            candidates_embeddings = self.get_span_embeddings(mention_sequence_output.view(-1, self.config.hidden_size),
+            candidates_embeddings = self.get_span_embeddings(doc_embeddings,
                                                              candidate_starts,
                                                              candidate_ends)
             # get topk scores
             # [num_candidates]
             candidate_mention_scores = self.mention_span_ffnn(candidates_embeddings).squeeze(-1)
 
-        flattened_input_ids = input_ids.view(-1)
-        flattened_input_mask = input_mask.view(-1)
+        # flattened_input_ids = window_input_ids.view(-1)
+        # flattened_input_mask = window_masked_ids.view(-1)
         k = topk_span_starts.shape[0]
         c = min(self.max_antecedent_num, origin_k)
-        # QA linking(for each proposal in k)
+        # build k queries
         questions = []
         for span_start, span_end in zip(topk_span_starts, topk_span_ends):
             # [query_length]
-            question_tokens = self.get_question_token_ids(sentence_map=sentence_map,
-                                                          flattened_input_ids=flattened_input_ids,
-                                                          flattened_input_mask=flattened_input_mask,
-                                                          span_start=span_start,
-                                                          span_end=span_end)
+            # question_tokens = self.get_question_token_ids(sentence_map=sentence_map,
+            #                                               flattened_input_ids=flattened_input_ids,
+            #                                               flattened_input_mask=flattened_input_mask,
+            #                                               span_start=span_start,
+            #                                               span_end=span_end)
+            question_tokens = self.fast_get_question_token_ids(sentence_map=sentence_map,
+                                                               doc_ids=doc_ids,
+                                                               span_start=span_start,
+                                                               span_end=span_end)
             questions.append(question_tokens)
         # [k, num_windows*window_size, embed_size]
         batch_forward_embeddings = self.get_batch_query_mention_embeddings(
             questions=questions,
-            input_ids=input_ids
+            input_ids=window_input_ids
         )
+        # [k, num_tokens, embed_size]
+        batch_forward_embeddings = batch_forward_embeddings.index_select(dim=1, index=doc2windows)
 
         # [k, num_candidates, embed_size]
         batch_forward_start_embeddings = torch.index_select(batch_forward_embeddings, dim=1,
@@ -189,37 +220,51 @@ class CorefQA(BertPreTrainedModel):
         batch_forward_mention_scores = self.mention_span_ffnn(batch_forward_candidate_embeddings).squeeze(-1)
         # [k, c]
         batch_topc_forward_scores, batch_topc_forward_indices = torch.topk(batch_forward_mention_scores, k=c, dim=1)
-        batch_topc_forward_starts = candidate_starts.index_select(dim=0, index=batch_topc_forward_indices.view(-1)).view(k, c)
-        batch_topc_forward_ends = candidate_ends.index_select(dim=0, index=batch_topc_forward_indices.view(-1)).view(k, c)
-        batch_topc_forward_labels = candidate_labels.index_select(dim=0, index=batch_topc_forward_indices.view(-1)).view(k, c)
-        batch_topc_mention_scores = candidate_mention_scores.index_select(dim=0, index=batch_topc_forward_indices.view(-1)).view(k, c)
+        batch_topc_forward_starts = candidate_starts[batch_topc_forward_indices.view(-1)].view(k, c)
+        batch_topc_forward_ends = candidate_ends[batch_topc_forward_indices.view(-1)].view(k, c)
+        batch_topc_forward_labels = candidate_labels[batch_topc_forward_indices.view(-1)].view(k, c)
+        batch_topc_mention_scores = candidate_mention_scores[batch_topc_forward_indices.view(-1)].view(k, c)
 
         batch_backward_input_ids = []
         batch_backward_mask = []
         batch_backward_token_type_ids = []
-        batch_backward_mention_starts = torch.zeros(k*c, device=input_ids.device, dtype=torch.int64)
-        batch_backward_mention_ends = torch.zeros(k*c, device=input_ids.device, dtype=torch.int64)
+        batch_backward_mention_starts = torch.zeros(k * c, device=window_input_ids.device, dtype=torch.int64)
+        batch_backward_mention_ends = torch.zeros(k * c, device=window_input_ids.device, dtype=torch.int64)
         for back_idx, (back_span_start, back_span_end) in enumerate(zip(batch_topc_forward_starts.view(-1),
                                                                         batch_topc_forward_ends.view(-1))):
             k_idx = back_idx // c
             # [query_length]
-            back_question_tokens = self.get_question_token_ids(
+            # back_question_tokens = self.get_question_token_ids(
+            #     sentence_map=sentence_map,
+            #     flattened_input_ids=flattened_input_ids,
+            #     flattened_input_mask=flattened_input_mask,
+            #     span_start=back_span_start,
+            #     span_end=back_span_end
+            # )
+            back_question_tokens = self.fast_get_question_token_ids(
                 sentence_map=sentence_map,
-                flattened_input_ids=flattened_input_ids,
-                flattened_input_mask=flattened_input_mask,
+                doc_ids=doc_ids,
                 span_start=back_span_start,
                 span_end=back_span_end
             )
             # use only proposal sent as context
             # [context_length]
-            back_context_tokens, back_mention_start, back_mention_end = self.get_question_token_ids(
+            # back_context_tokens, back_mention_start, back_mention_end = self.get_question_token_ids(
+            #     sentence_map=sentence_map,
+            #     flattened_input_ids=flattened_input_ids,
+            #     flattened_input_mask=flattened_input_mask,
+            #     span_start=topk_span_starts[k_idx],
+            #     span_end=topk_span_ends[k_idx],
+            #     return_offset=True
+            # )
+            back_context_tokens, back_mention_start, back_mention_end = self.fast_get_question_token_ids(
                 sentence_map=sentence_map,
-                flattened_input_ids=flattened_input_ids,
-                flattened_input_mask=flattened_input_mask,
+                doc_ids=doc_ids,
                 span_start=topk_span_starts[k_idx],
                 span_end=topk_span_ends[k_idx],
                 return_offset=True
             )
+            # todo(yuxian): SEP?
             back_input_ids = torch.cat([back_question_tokens, back_context_tokens])
             back_mask = back_input_ids != self.pad_idx
             batch_backward_input_ids.append(back_input_ids)
@@ -231,9 +276,9 @@ class CorefQA(BertPreTrainedModel):
             batch_backward_mention_starts[back_idx] = back_mention_start + len(back_question_tokens)
             batch_backward_mention_ends[back_idx] = back_mention_end + len(back_context_tokens)
         # [k*c, query_length+context_length]
-        batch_backward_input_ids = self.pad_stack(batch_backward_input_ids, pad_idx=0, dim=-1)
-        batch_backward_mask = self.pad_stack(batch_backward_mask, pad_idx=0, dim=-1)
-        batch_backward_token_type_ids = self.pad_stack(batch_backward_token_type_ids, pad_idx=1, dim=-1)
+        batch_backward_input_ids = self.pad_stack(batch_backward_input_ids, pad_value=0, dim=-1)
+        batch_backward_mask = self.pad_stack(batch_backward_mask, pad_value=0, dim=-1)
+        batch_backward_token_type_ids = self.pad_stack(batch_backward_token_type_ids, pad_value=1, dim=-1)
         # [k*c, query_length+context_length, embed_size]
         batch_backward_embeddings, _ = self.bert(batch_backward_input_ids, batch_backward_token_type_ids,
                                                  batch_backward_mask,
@@ -374,7 +419,7 @@ class CorefQA(BertPreTrainedModel):
         Args:
             sentence_map: [num_tokens] tokens to sentence_id
             flattened_input_ids: [num_windows * window_size]
-            flattened_input_mask: [num_windows * window_size]
+            flattened_input_mask: [num_windows * window_size] todo(yuxian): this is ugly, consider input origin doc_ids directly
             span_start: int
             span_end: int
             return_offset: bool, if True, return mention start/end
@@ -392,6 +437,40 @@ class CorefQA(BertPreTrainedModel):
         mention_end = torch.where(flattened_input_mask == span_end)[0][0]
         mention_start_in_sentence = mention_start - sent_start
         mention_end_in_sentence = mention_end - sent_start
+
+        question_token_ids = torch.cat([origin_tokens[: mention_start_in_sentence],
+                                        torch.Tensor([self.mention_start_idx]).long().to(origin_tokens.device),
+                                        origin_tokens[mention_start_in_sentence: mention_end_in_sentence + 1],
+                                        torch.Tensor([self.mention_end_idx]).long().to(origin_tokens.device),
+                                        origin_tokens[mention_end_in_sentence + 1:],
+                                        ], dim=0)
+        if return_offset:
+            return question_token_ids, mention_start_in_sentence+1, mention_end_in_sentence+1
+        return question_token_ids
+
+    def fast_get_question_token_ids(self, sentence_map, doc_ids, span_start, span_end,
+                               return_offset=False):
+        """
+        Desc: # todo(yuxian): add SEP
+            construct question based on the selected mention span
+        Args:
+            sentence_map: [num_tokens] tokens to sentence_id
+            doc_ids: [num_tokens] doc tokens
+            span_start: int
+            span_end: int
+            return_offset: bool, if True, return mention start/end
+        Returns:
+            query tokens: [query_length] query_length=origin_sent_length+2(special token)
+        """
+        sentence_idx = sentence_map[span_start]
+        # [num_sent_token]
+        sent_positions = torch.where(sentence_map == sentence_idx)[0]
+        sent_start = sent_positions[0]
+        sent_end = sent_positions[-1]
+        origin_tokens = doc_ids[sent_start: sent_end+1]
+
+        mention_start_in_sentence = span_start - sent_start
+        mention_end_in_sentence = span_end - sent_start
 
         question_token_ids = torch.cat([origin_tokens[: mention_start_in_sentence],
                                         torch.Tensor([self.mention_start_idx]).long().to(origin_tokens.device),
@@ -485,13 +564,14 @@ class CorefQA(BertPreTrainedModel):
         return flattened_forward_embeddings
 
     @staticmethod
-    def pad_stack(tensors, pad_idx: int = 0, dim: int = -1):
+    def pad_stack(tensors, pad_value: int = 0, dim: int = -1):
         """
         stack tensors and pad to same max length
+        note that all tensors must have same length in all dimensions except dim.
         Args:
             tensors: List of tensor, has different length at dim
-            pad_idx: pad index
-            dim: pad dimension
+            pad_value: pad value
+            dim: pad dimension.
         Returns:
             batch_tensor: [batch, tensor.shape]
         """
@@ -501,7 +581,7 @@ class CorefQA(BertPreTrainedModel):
         final_shape[dim] = max_length
         tensor_num = len(tensors)
         output_tensor = torch.zeros([tensor_num] + final_shape, dtype=tensors[0].dtype, device=tensors[0].device)
-        output_tensor.fill_(pad_idx)
+        output_tensor.fill_(pad_value)
         for tensor_idx, tensor in enumerate(tensors):
             slices = [slice(None, size, None) for size in tensor.shape]
             output_tensor[tensor_idx][slices] = tensor

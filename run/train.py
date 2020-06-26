@@ -161,7 +161,7 @@ def backward_loss(optimizer, loss, fp16=False, retain_graph=False):
         loss.backward(retain_graph=retain_graph)
 
 
-def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_dataloader, config,
+def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader, test_dataloader, config,
           device, n_gpu,):
 
     tr_loss = 0
@@ -215,10 +215,10 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
             #     gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
 
             loss = 0.0
-            (proposal_loss, sentence_map, input_ids, input_mask,
+            (proposal_loss, sentence_map, window_input_ids, window_masked_ids,
              candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
              topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) = model(doc_idx=doc_idx, sentence_map=sentence_map, subtoken_map=subtoken_map, input_ids=input_ids, input_mask=input_mask,
-                         gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
+                                                                                              gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=cluster_ids)
             proposal_loss /= config.gradient_accumulation_steps
             tr_loss += proposal_loss.item()
             epoch_loss += proposal_loss.item()
@@ -240,8 +240,8 @@ def train(model, optimizer, sheduler,  train_dataloader, dev_dataloader, test_da
                 chunk_end = chunk_start + config.mention_chunk_size
                 link_loss = model.batch_qa_linking(
                     sentence_map=sentence_map,
-                    input_ids=input_ids,
-                    input_mask=input_mask,
+                    window_input_ids=window_input_ids,
+                    window_masked_ids=window_masked_ids,
                     token_type_ids=token_type_ids,
                     attention_mask=attention_mask,
                     candidate_starts=candidate_starts,
@@ -387,8 +387,6 @@ def main():
     train_dataloader, dev_dataloader, test_dataloader = load_data(config, data_sign="conll")
     model, optimizer, sheduler, device, n_gpu = load_model(config)
     train(model, optimizer, sheduler, train_dataloader, dev_dataloader, test_dataloader, config, device, n_gpu) 
-
-
 
 
 if __name__ == "__main__":
