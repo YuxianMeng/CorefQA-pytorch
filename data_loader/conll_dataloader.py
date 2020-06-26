@@ -27,7 +27,7 @@ class CoNLLDataset(Dataset):
     def __getitem__(self, item):
         feature: CoNLLCorefResolution = self.features[item]
         return {
-            "doc_idx": torch.tensor([feature.doc_idx], dtype=torch.int64),
+            # "doc_idx": torch.tensor([feature.doc_idx], dtype=torch.int64),
             "sentence_map": torch.tensor(feature.sentence_map, dtype=torch.int64),
             "subtoken_map": torch.tensor(feature.subtoken_map, dtype=torch.int64),
             "flattened_window_input_ids": torch.tensor(feature.flattened_window_input_ids, dtype=torch.int64),
@@ -36,7 +36,7 @@ class CoNLLDataset(Dataset):
             "span_end": torch.tensor(feature.span_end, dtype=torch.int64),
             "cluster_ids": torch.tensor(feature.cluster_ids, dtype=torch.int64),
             "mention_span": torch.tensor(feature.mention_span, dtype=torch.int64)
-        }
+        } 
 
 
 class CoNLLDataLoader(object):

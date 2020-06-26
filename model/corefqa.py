@@ -46,7 +46,7 @@ class CorefQA(BertPreTrainedModel):
         self.bce_loss = torch.nn.BCEWithLogitsLoss()
 
     def forward(self, sentence_map, subtoken_map, window_input_ids, window_masked_ids, gold_mention_span=None, token_type_ids=None,
-                attention_mask=None, span_starts=None, span_ends=None, cluster_ids=None):
+                attention_mask=None, span_starts=None, span_ends=None, cluster_ids=None, mode="eval"):
         """
         forward
         Args:
@@ -103,6 +103,9 @@ class CorefQA(BertPreTrainedModel):
         # return (proposal_loss, sentence_map, input_ids, input_mask,
         #         candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores,
         #         topk_span_starts, topk_span_ends, topk_span_labels, top_mention_scores)
+        # if mode == "eval":
+        #     return topk_span_starts.detach(), topk_span_ends.detach() 
+        # else:
         return (proposal_loss, sentence_map.detach(), window_input_ids.detach(), window_masked_ids.detach(),
                 candidate_starts.detach(), candidate_ends.detach(), candidate_labels.detach(), candidate_mention_scores.detach(),
                 topk_span_starts.detach(), topk_span_ends.detach(), topk_span_labels.detach(), top_mention_scores.detach())

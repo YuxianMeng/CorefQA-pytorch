@@ -5,11 +5,18 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os 
 import re
+import sys 
 import tempfile
 import subprocess
 import operator
 import collections
+
+REPO_PATH = "/".join(os.path.realpath(__file__).split("/")[:-2])
+print(REPO_PATH)
+if REPO_PATH not in sys.path:
+  sys.path.insert(0, REPO_PATH)
 
 BEGIN_DOCUMENT_REGEX = re.compile(r"#begin document \((.*)\); part (\d+)")
 COREF_RESULTS_REGEX = re.compile(r".*Coreference: Recall: \([0-9.]+ / [0-9.]+\) ([0-9.]+)%\tPrecision: \([0-9.]+ / [0-9.]+\) ([0-9.]+)%\tF1: ([0-9.]+)%.*", re.DOTALL)
@@ -73,7 +80,8 @@ def output_conll(input_file, output_file, predictions, subtoken_map):
       word_index += 1
 
 def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False):
-  cmd = ["conll-2012/scorer/v8.01/scorer.pl", metric, gold_path, predicted_path, "none"]
+  conll_eval_file = os.path.join(REPO_PATH, "data_preprocess", "conll-2012/scorer/v8.01/scorer.pl")
+  cmd = [conll_eval_file, metric, gold_path, predicted_path, "none"]
   process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
   stdout, stderr = process.communicate()
   process.wait()
