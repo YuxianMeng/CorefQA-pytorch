@@ -88,7 +88,6 @@ class CoNLLCorefResolution(object):
 
 def prepare_conll_dataset(input_file, sliding_window_size, tokenizer=None,\
     vocab_file=None, language="english"):
-    doc_map = {}
 
     if vocab_file is None:
         vocab_file = os.path.join(REPO_PATH, "data_preprocess", "vocab.txt")
@@ -102,12 +101,13 @@ def prepare_conll_dataset(input_file, sliding_window_size, tokenizer=None,\
     for doc_idx, document in enumerate(documents):
         doc_info = parse_document(document, language)
         tokenized_document = tokenize_document(doc_info, tokenizer)
-        doc_map[doc_idx] = tokenized_document['doc_key']
+        doc_key = tokenized_document['doc_key']
         token_windows, mask_windows = convert_to_sliding_window(tokenized_document, sliding_window_size)
         input_id_windows = [tokenizer.convert_tokens_to_ids(tokens) for tokens in token_windows]
         span_start, span_end, mention_span, cluster_ids = flatten_clusters(tokenized_document['clusters'])
 
-        data_instances.append(CoNLLCorefResolution(doc_idx, tokenized_document['sentence_map'], tokenized_document['subtoken_map'], input_id_windows, \
+
+        data_instances.append(CoNLLCorefResolution(doc_key, tokenized_document['sentence_map'], tokenized_document['subtoken_map'], input_id_windows, \
             mask_windows, span_start, span_end, mention_span, cluster_ids))
 
     return data_instances 

@@ -24,6 +24,7 @@ from data_loader.conll_dataloader import CoNLLDataLoader
 from model.corefqa import CorefQA
 from module import metrics
 from module.optimization import AdamW, warmup_linear
+from module import model_utils 
 
 
 try:
@@ -49,9 +50,10 @@ def args_parser():
     # requires parameters 
     parser.add_argument("--config_path", default="/home/lixiaoya/bert.yaml", type=str)
     parser.add_argument("--config_name", default="spanbert_base", type=str)
+    parser.add_argument("--eval_path", default="/home/lixiaoya/", type=str)
     parser.add_argument("--data_dir", default=None, type=str)
     parser.add_argument("--bert_model", default=None, type=str,)
-    parser.add_argument("--do_eval", default=bool, type=bool)
+    parser.add_argument("--do_eval", default=True, type=bool)
     parser.add_argument("--lr", default=5e-5, type=float)
     parser.add_argument("--eval_per_epoch", default=10, type=int) 
     parser.add_argument("--warmup_proportion", default=0.1, type=float)
@@ -60,7 +62,7 @@ def args_parser():
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=3006)
     parser.add_argument("--n_gpu", type=int, default=1)
-    parser.add_argument("--save_model", type=bool, default=False)
+    parser.add_argument("--save_model", type=bool, default=True)
     parser.add_argument("--fp16_opt_level", type=str,default="O3",
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
         "See details at https://nvidia.github.io/apex/amp.html",) 
@@ -194,11 +196,10 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
         for step, batch in enumerate(train_dataloader):
             ##if n_gpu == 1:
             ##    batch = tuple(t.to(device) for t in batch)
-            doc_idx, sentence_map,subtoken_map, window_input_ids, window_masked_ids, gold_mention_span, token_type_ids, attention_mask, \
-                span_starts, span_ends, cluster_ids = batch["doc_idx"].squeeze(0), batch["sentence_map"].squeeze(0), None, \
+            sentence_map,subtoken_map, window_input_ids, window_masked_ids, gold_mention_span, token_type_ids, attention_mask, \
+                span_starts, span_ends, cluster_ids = batch["sentence_map"].squeeze(0), None, \
                 batch["flattened_window_input_ids"].view(-1, config.sliding_window_size), batch["flattened_window_masked_ids"].view(-1, config.sliding_window_size), \
                 batch["mention_span"].squeeze(0), None, None, batch["span_start"].squeeze(0), batch["span_end"].squeeze(0), batch["cluster_ids"].squeeze(0)
-            doc_idx= doc_idx.to(device)
             sentence_map= sentence_map.to(device)
             # subtoken_map = subtoken_map.to(device)
             window_input_ids = window_input_ids.to(device)
@@ -293,12 +294,12 @@ def train(model: CorefQA, optimizer, sheduler,  train_dataloader, dev_dataloader
                         best_dev_average_f1 = dev_average_f1 
                         best_dev_summary_dict = dev_summary_eval_dict 
 
-                        if conifg.save_model:
+                        if config.save_model:
                             model_to_save = model.module if hasattr(model, "module") else model 
                             output_model_file = os.path.join(config.output_dir, "{}_{}.checkpoint".format(str(epoch), str(step+1)))
-                            output_config_file = os.path.join(config.output_dir, "{}_{}.conf".format(str(epoch), str(step+1)))
+                            # output_config_file = os.path.join(config.output_dir, "{}_{}.conf".format(str(epoch), str(step+1)))
                             torch.save(model_to_save.state_dict(), output_model_file)
-                            tokenizer.save_vocabulary(config.output_dir)
+                            # tokenizer.save_vocabulary(config.output_dir)
 
                         test_summary_dict_when_dev_best, test_average_f1_whem_dev_best = evaluate(config, model, device, test_dataloader, n_gpu, eval_sign="test")
                         
@@ -321,37 +322,90 @@ def evaluate(config, model_object, device, dataloader, n_gpu, eval_sign="dev", o
     print("="*8 + "Evaluate {} dataset".format(eval_sign) + "="*8)
 
     coref_prediction = {}
+    subtoken_map_dict = {}
     coref_evaluator = metrics.CorefEvaluator()
 
     # top_span_starts, top_span_ends, predicted_antecedents, predicted_clusters
     for case_idx, case_feature in enumerate(dataloader):
-        doc_idx, sentence_map, subtoken_map, window_input_ids, window_masked_ids = case_feature["doc_idx"].squeeze(0), \
-            case_feature["sentence_map"].squeeze(0), case_feature["flattened_window_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_window_masked_ids"].view(-1, config.sliding_window_size)
+        case_doc_key = dataloader.dataset.features[case_idx].doc_idx 
 
-        gold_mention_span, token_type_ids, attention_mask = case_feature["mention_span"].squeeze(0), None, None
-        span_starts, span_ends, gold_cluster_ids = case_feature["span_start"].squeeze(0), case_feature["span_end"].squeeze(0), case_feature["cluster_ids"].squeeze(0)
-
-        doc_idx, sentence_map,window_input_ids,window_masked_ids,gold_mention_span,span_starts,span_ends, gold_cluster_ids = doc_idx.to(device), sentence_map.to(device), \
-            window_input_ids.to(device), window_masked_ids.to(device), gold_mention_span.to(device), span_starts.to(device), span_ends.to(device), gold_cluster_ids.to(device)
+        sentence_map,subtoken_map, window_input_ids, window_masked_ids, gold_mention_span, token_type_ids, attention_mask, \
+                span_starts, span_ends, cluster_ids = case_feature["sentence_map"].squeeze(0), None, \
+                case_feature["flattened_window_input_ids"].view(-1, config.sliding_window_size), case_feature["flattened_window_masked_ids"].view(-1, config.sliding_window_size), \
+                case_feature["mention_span"].squeeze(0), None, None, case_feature["span_start"].squeeze(0), case_feature["span_end"].squeeze(0), case_feature["cluster_ids"].squeeze(0)
+        sentence_map= sentence_map.to(device)
+        # subtoken_map = subtoken_map.to(device)
+        window_input_ids = window_input_ids.to(device)
+        window_masked_ids = window_masked_ids.to(device)
+        gold_mention_span = gold_mention_span.to(device)
+        span_starts = span_starts.to(device)
+        span_ends = span_ends.to(device)
+        cluster_ids = cluster_ids.to(device)
 
         with torch.no_grad():
-            loss, pred_cluster_ids, mention_to_predict, mention_to_gold = model_object(sentence_map=sentence_map, subtoken_map=subtoken_map, \
-                window_input_ids=window_input_ids, window_masked_ids=window_masked_ids, gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, \
-                attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, cluster_ids=gold_cluster_ids, mode="eval")
+            (proposal_loss, sentence_map, window_input_ids, window_masked_ids, \
+             candidate_starts, candidate_ends, candidate_labels, candidate_mention_scores, \
+             topk_span_starts, topk_span_ends, topk_span_labels, topk_mention_scores) =  model_object(sentence_map=sentence_map, subtoken_map=subtoken_map, window_input_ids=window_input_ids, \
+                window_masked_ids=window_masked_ids, gold_mention_span=gold_mention_span, token_type_ids=token_type_ids, \
+                attention_mask=attention_mask, span_starts=span_starts, span_ends=span_ends, \
+                cluster_ids=cluster_ids, mode="eval")
 
-        pred_cluster_ids = pred_cluster_ids.detach().cpu().numpy().tolist()
-        mention_to_predict = mention_to_predict.detach().cpu().numpy().tolist()
-        gold_cluster_ids = gold_cluster_ids.to("cpu").numpy().tolist()
-        mention_to_gold = mention_to_gold.to("cpu").numpy().tolist()
+            mention_num = topk_span_starts.shape[0]
+            chunk_num = max(1, mention_num // config.mention_chunk_size)
+            all_chunk_lst = []
+            for chunk_idx in range(chunk_num):
+                chunk_start = config.mention_chunk_size * chunk_idx
+                chunk_end = chunk_start + config.mention_chunk_size
+                link_loss, loss_antecedent_scores, mention_to_predict, mention_to_gold = model_object.batch_qa_linking(
+                    sentence_map=sentence_map,
+                    window_input_ids=window_input_ids,
+                    window_masked_ids=window_masked_ids,
+                    token_type_ids=token_type_ids,
+                    attention_mask=attention_mask,
+                    candidate_starts=candidate_starts,
+                    candidate_ends=candidate_ends,
+                    candidate_labels=candidate_labels,
+                    candidate_mention_scores=candidate_mention_scores,
+                    topk_span_starts=topk_span_starts[chunk_start: chunk_end],
+                    topk_span_ends=topk_span_ends[chunk_start: chunk_end],
+                    topk_span_labels=topk_span_labels[chunk_start: chunk_end],
+                    topk_mention_scores=topk_mention_scores[chunk_start: chunk_end],
+                    origin_k=mention_num,
+                    gold_mention_span=gold_mention_span,
+                    recompute_mention_scores=True,
+                    mode="eval"
+                )
 
-        coref_prediction[doc_idx] = pred_cluster_ids
-        coref_evaluator.update(pred_cluster_ids, gold_cluster_ids, mention_to_predict, mention_to_gold)
+                # loss_antecedent_scores: chunk-size * c+1 
+                all_chunk_lst.append(loss_antecedent_scores)
+            
+            all_chunk_antecedent_scores = torch.cat(all_chunk_lst, 0)
+            predicted_antecedents = torch.argmax(all_chunk_antecedent_scores, dim=-1)
+
+            predicted_antecedents = predicted_antecedents.detach().cpu().numpy().tolist()
+            topk_span_starts = topk_span_starts.detach().cpu().numpy().tolist()
+            topk_span_ends = topk_span_ends.detach().cpu().numpy().tolist()
+
+            predicted_clusters, mention_to_predicted = model_utils.get_predicted_clusters(topk_span_starts, topk_span_ends, predicted_antecedents)
+
+            mention_to_gold = mention_to_gold.to("cpu").numpy().tolist()
+
+        coref_prediction[case_doc_key] = predicted_clusters
+        subtoken_map_dict[case_doc_key] = case_feature["subtoken_map"]
+
+        # coref_evaluator.update(pred_cluster_ids, gold_cluster_ids, mention_to_predict, mention_to_gold)
 
     summary_dict = {}
-    conll_results = conll.evaluate_conll(config.eval_path, coref_prediction, official_stdout)
+    conll_results = conll.evaluate_conll(config.eval_path, coref_prediction, subtoken_map_dict, official_stdout)
     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
     summary_dict["Average F1 (conll)"] = average_f1
+    print("@"*40)
     print("Average F1 (conll) : {:.2f}%".format(average_f1))
+    print("CoNLL Results: ")
+    print(conll_results)
+    print("@"*40)
+    exit()
+
 
     p, r, f = coref_evaluator.get_prf()
     summary_dict["Average F1 (py)"] = f
