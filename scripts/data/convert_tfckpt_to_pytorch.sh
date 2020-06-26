@@ -5,7 +5,7 @@
 
 # author: xiaoy li 
 # description:
-# 
+# https://huggingface.co/transformers/v2.4.0/converting_tensorflow_models.html
 
 model_sign=$1
 
