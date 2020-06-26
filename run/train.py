@@ -96,9 +96,9 @@ def load_data(config, data_sign="conll"):
     else:
         raise ValueError(">>> DO NOT IMPLEMENT GAP DATASET >>>")  
 
-    train_dataloader = dataloader.get_dataloader("train")
-    dev_dataloader = dataloader.get_dataloader("dev")
-    test_dataloader = dataloader.get_dataloader("test")
+    train_dataloader = dataloader.get_dataloader("train", use_cache=True)
+    dev_dataloader = dataloader.get_dataloader("dev", use_cache=True)
+    test_dataloader = dataloader.get_dataloader("test", use_cache=True)
 
     return train_dataloader, dev_dataloader, test_dataloader
 
