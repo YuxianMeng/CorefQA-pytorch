@@ -10,6 +10,7 @@
 
 import os 
 import torch
+import pickle
 from typing import List
 
 
@@ -66,9 +67,15 @@ class CoNLLDataLoader(object):
 
         return features
 
-    def get_dataloader(self, data_sign="train"):
-
-        features = self.convert_examples_to_features(data_sign=data_sign)
+    def get_dataloader(self, data_sign="train", use_cache=False):
+        cache_file = os.path.join(self.data_dir, "{}.{}.v4_gold_conll.pkl".format(data_sign, self.language))
+        if use_cache and os.path.exists(cache_file):
+            print(f"loading data from cached file {cache_file}")
+            features = pickle.load(open(cache_file, "rb"))
+        else:
+            features = self.convert_examples_to_features(data_sign=data_sign)
+            pickle.dump(features, open(cache_file, "wb"))
+            print(f"dump cached data to {cache_file}")
         dataset = CoNLLDataset(features)
 
         if data_sign == "dev":
@@ -82,4 +89,3 @@ class CoNLLDataLoader(object):
             dataloader = DataLoader(dataset, sampler=datasampler, batch_size=self.train_batch_size)
 
         return dataloader 
-
