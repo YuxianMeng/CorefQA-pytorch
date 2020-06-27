@@ -115,8 +115,7 @@ def load_model(config):
     # naive_model = CorefQA(naive_bert_config, config, device)
     model = CorefQA.from_pretrained(config.bert_model, config=config, device=device)
 
-
-    model.to(device)
+    model = model.to(device)
 
     if config.n_gpu > 1:
         model = torch.nn.DataParallel(model)
@@ -176,7 +175,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
     train_batches = [batch for batch in train_dataloader]
     eval_step = max(1, len(train_batches) // config.eval_per_epoch)
 
-    if config.mention_proposal_only:
+    if config.do_eval and config.mention_proposal_only:
         LOGGING.info(f"evaluating before training")
         precision, recall, f1 = evaluate_mention_proposal(model=model, dataloader=dev_dataloader,
                                                           device=device)
