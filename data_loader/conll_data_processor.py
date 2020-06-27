@@ -2,30 +2,28 @@
 # -*- coding: utf-8 -*- 
 
 
-
-# author: xiaoy li 
+# author: xiaoy li
 # description:
 # 
 
 
-import os 
-import re 
-import data_preprocess.conll as conll 
-from typing import List, Tuple 
+import os
+import re
+import data_preprocess.conll as conll
+from typing import List, Tuple
 from collections import defaultdict
-from transformers.tokenization import BertTokenizer 
-
+from transformers.tokenization import BertTokenizer
 
 REPO_PATH = "/".join(os.path.realpath(__file__).split("/")[:-2])
 
 SPEAKER_START = '[unused19]'
 SPEAKER_END = '[unused73]'
-
+# MAX_LENGTH = 0
 
 
 class CoNLLCorefResolution(object):
-    def __init__(self, doc_idx, sentence_map, subtoken_map, flattened_window_input_ids, \
-        flattened_window_masked_ids, span_start, span_end, mention_span, cluster_ids):
+    def __init__(self, doc_idx, sentence_map, subtoken_map, flattened_window_input_ids,
+                 flattened_window_masked_ids, span_start, span_end, mention_span, cluster_ids):
         """
         Desc:
             a single training/test example for the squad dataset.
@@ -75,20 +73,19 @@ class CoNLLCorefResolution(object):
                 3. ['everyone']
         """
 
-        self.doc_idx = doc_idx 
-        self.sentence_map = sentence_map 
-        self.subtoken_map = subtoken_map 
-        self.flattened_window_input_ids = flattened_window_input_ids 
-        self.flattened_window_masked_ids = flattened_window_masked_ids 
+        self.doc_idx = doc_idx
+        self.sentence_map = sentence_map
+        self.subtoken_map = subtoken_map
+        self.flattened_window_input_ids = flattened_window_input_ids
+        self.flattened_window_masked_ids = flattened_window_masked_ids
         self.span_start = span_start
         self.span_end = span_end
-        self.mention_span = mention_span 
-        self.cluster_ids = cluster_ids 
+        self.mention_span = mention_span
+        self.cluster_ids = cluster_ids
 
 
-def prepare_conll_dataset(input_file, sliding_window_size, tokenizer=None,\
-    vocab_file=None, language="english"):
-
+def prepare_conll_dataset(input_file, sliding_window_size, tokenizer=None,
+                          vocab_file=None, language="english", max_doc_length: int = None):
     if vocab_file is None:
         vocab_file = os.path.join(REPO_PATH, "data_preprocess", "vocab.txt")
 
@@ -100,20 +97,22 @@ def prepare_conll_dataset(input_file, sliding_window_size, tokenizer=None,\
     documents = read_conll_file(input_file)
     for doc_idx, document in enumerate(documents):
         doc_info = parse_document(document, language)
-        tokenized_document = tokenize_document(doc_info, tokenizer)
+        tokenized_document = tokenize_document(doc_info, tokenizer, max_doc_length=max_doc_length)
         doc_key = tokenized_document['doc_key']
         token_windows, mask_windows = convert_to_sliding_window(tokenized_document, sliding_window_size)
         input_id_windows = [tokenizer.convert_tokens_to_ids(tokens) for tokens in token_windows]
         span_start, span_end, mention_span, cluster_ids = flatten_clusters(tokenized_document['clusters'])
 
+        data_instances.append(
+            CoNLLCorefResolution(doc_key, tokenized_document['sentence_map'], tokenized_document['subtoken_map'],
+                                 input_id_windows,
+                                 mask_windows, span_start, span_end, mention_span, cluster_ids))
 
-        data_instances.append(CoNLLCorefResolution(doc_key, tokenized_document['sentence_map'], tokenized_document['subtoken_map'], input_id_windows, \
-            mask_windows, span_start, span_end, mention_span, cluster_ids))
-
-    return data_instances 
+    return data_instances
 
 
-def flatten_clusters(clusters: List[List[Tuple[int, int]]]) -> Tuple[List[int], List[int], List[Tuple[int, int]], List[int]]:
+def flatten_clusters(clusters: List[List[Tuple[int, int]]]) -> Tuple[
+    List[int], List[int], List[Tuple[int, int]], List[int]]:
     """
     flattern cluster information
     :param clusters:
@@ -221,16 +220,18 @@ def checkout_clusters(doc_info):
     print(clusters)
 
 
-def tokenize_document(doc_info: dict, tokenizer: BertTokenizer) -> dict:
+def tokenize_document(doc_info: dict, tokenizer: BertTokenizer, max_doc_length: int = None) -> dict:
     """
     tokenize into sub tokens
     :param doc_info:
     :param tokenizer:
+    max_doc_length: pad to max_doc_length
     :return:
     """
     sub_tokens: List[str] = []  # all sub tokens of a document
     sentence_map: List[int] = []  # collected tokenized tokens -> sentence id
     subtoken_map: List[int] = []  # collected tokenized tokens -> original token id
+
     word_idx = -1
 
     for sentence_id, sentence in enumerate(doc_info['sentences']):
@@ -240,7 +241,17 @@ def tokenize_document(doc_info: dict, tokenizer: BertTokenizer) -> dict:
             sub_tokens.extend(word_tokens)
             sentence_map.extend([sentence_id] * len(word_tokens))
             subtoken_map.extend([word_idx] * len(word_tokens))
-
+    if max_doc_length:
+        num_to_pad = max_doc_length - len(sub_tokens)
+        sub_tokens.extend(["[PAD]"] * num_to_pad)
+        sentence_map.extend([sentence_map[-1]+1] * num_to_pad)
+        subtoken_map.extend(list(range(word_idx+1, num_to_pad+1+word_idx)))
+    # global MAX_LENGTH
+    # if len(sub_tokens) > MAX_LENGTH:
+    #     print(len(sub_tokens))
+    #     MAX_LENGTH = len(sub_tokens)
+        # print(MAX_LENGTH)
+    # todo(yuxian): need pad speakers?
     speakers = {subtoken_map.index(word_index): tokenizer.tokenize(speaker)
                 for word_index, speaker in doc_info['speakers']}
     clusters = [[(subtoken_map.index(start), len(subtoken_map) - 1 - subtoken_map[::-1].index(end))
@@ -248,6 +259,7 @@ def tokenize_document(doc_info: dict, tokenizer: BertTokenizer) -> dict:
     tokenized_document = {'sub_tokens': sub_tokens, 'sentence_map': sentence_map, 'subtoken_map': subtoken_map,
                           'speakers': speakers, 'clusters': clusters, 'doc_key': doc_info['doc_key']}
     return tokenized_document
+
 
 def convert_to_sliding_window(tokenized_document: dict, sliding_window_size: int):
     """
@@ -264,7 +276,8 @@ def convert_to_sliding_window(tokenized_document: dict, sliding_window_size: int
         original_tokens = expanded_tokens[window_start: window_end]
         original_masks = expanded_masks[window_start: window_end]
         window_masks = [-2 if w == 0 else o for w, o in zip(window_mask, original_masks)]
-        one_window_token = ['[CLS]'] + original_tokens + ['[SEP]'] + ['[PAD]'] * (sliding_window_size - 2 - len(original_tokens))
+        one_window_token = ['[CLS]'] + original_tokens + ['[SEP]'] + ['[PAD]'] * (
+                sliding_window_size - 2 - len(original_tokens))
         one_window_mask = [-3] + window_masks + [-3] + [-4] * (sliding_window_size - 2 - len(original_tokens))
         assert len(one_window_token) == sliding_window_size
         assert len(one_window_mask) == sliding_window_size
@@ -272,7 +285,6 @@ def convert_to_sliding_window(tokenized_document: dict, sliding_window_size: int
         mask_windows.append(one_window_mask)
     assert len(tokenized_document['sentence_map']) == sum([i >= 0 for j in mask_windows for i in j])
     return token_windows, mask_windows
-
 
 
 def expand_with_speakers(tokenized_document: dict) -> Tuple[List[str], List[int]]:
@@ -315,4 +327,3 @@ def construct_sliding_windows(sequence_length: int, sliding_window_size: int):
         start_index += stride
     assert sum([sum(window[2]) for window in sliding_windows]) == sequence_length
     return sliding_windows
-

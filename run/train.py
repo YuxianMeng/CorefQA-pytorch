@@ -70,6 +70,7 @@ def args_parser():
     parser.add_argument("--mention_proposal_only", action="store_true", help="only train mention proposal network")
     parser.add_argument("--use_cache_data", action="store_true", help="use cache data to save time")
     parser.add_argument("--save_model", action="store_true", help="save model")
+    parser.add_argument("--is_padding", action="store_false", help="pad doc to max_doc_length")
 
     args = parser.parse_args()
 
@@ -196,7 +197,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
         #     torch.distributed.barrier()
 
         # iter_bar = tqdm(train_dataloader, desc="-Iter", disable=config.params.local_rank not in [-1, 0])
-        # iter_bar = tqdm(train_dataloader, desc="-Iter")
+        iter_bar = tqdm(train_dataloader, desc="-Iter")
         for step, batch in enumerate(train_dataloader):
             ##if n_gpu == 1:
             ##    batch = tuple(t.to(device) for t in batch)
@@ -239,15 +240,15 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                 span_ends=span_ends,
                 cluster_ids=cluster_ids
             )
+            print(span_starts.shape, window_input_ids.shape)
             proposal_loss /= config.gradient_accumulation_steps
-            tr_loss += proposal_loss.item()
+            tr_loss += proposal_loss.detach()
             if config.mention_chunk_size:
                 backward_loss(optimizer=optimizer, fp16=config.fp16, loss=proposal_loss)
             else:
                 loss += proposal_loss
             item_loss = 0
-            item_loss += proposal_loss.item()
-            tr_loss += proposal_loss.item()
+            item_loss += proposal_loss.detach()
             #
             # # use golden proposal to check code
             # topk_span_starts = span_starts
@@ -287,8 +288,8 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                         backward_loss(optimizer=optimizer, loss=link_loss, fp16=config.fp16, retain_graph=False)
                     else:
                         loss += link_loss
-                    item_loss += link_loss.item()
-                    tr_loss += link_loss.item()
+                    item_loss += link_loss.detach()
+                    tr_loss += link_loss.detach()
             epoch_loss += item_loss
 
             nb_tr_examples += window_input_ids.size(0)
@@ -361,13 +362,13 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                                 for key in sorted(test_summary_dict_when_dev_best.keys()):
                                     writer.write("Test: %s = %s\n" % (key, str(test_summary_dict_when_dev_best[key])))
                                 writer.write("TEST Average (conll) F1 : %s" % (str(test_average_f1_when_dev_best)))
-        #     iter_bar.update()
-        #     # current_lr = sheduler.get_lr()[0]
-        #     iter_bar.set_postfix({
-        #         'loss_cur': f'{item_loss:.3f}',
-        #         'loss_epoch': f'{epoch_loss / (step + 1):.3f}'
-        #     })
-        # iter_bar.close()
+            iter_bar.update()
+            # current_lr = sheduler.get_lr()[0]
+            iter_bar.set_postfix({
+                'loss_cur': f'{item_loss:.3f}',
+                'loss_epoch': f'{epoch_loss / (step + 1):.3f}'
+            })
+        iter_bar.close()
 
 
 def evaluate_mention_proposal(model: CorefQA, dataloader, device):
@@ -411,15 +412,9 @@ def evaluate_mention_proposal(model: CorefQA, dataloader, device):
             )
         predict_labels = torch.sigmoid(candidate_mention_scores) > 0.5
         gold_labels = candidate_labels
-        for pred, gold in zip(predict_labels, gold_labels):
-            pred = pred.item()
-            gold = gold.item()
-            if pred and gold:
-                tp += 1
-            elif pred and not gold:
-                fp += 1
-            elif gold and not pred:
-                fn += 1
+        tp += torch.logical_and(predict_labels == 1, gold_labels == 1).sum()
+        fp += torch.logical_and(predict_labels == 1, gold_labels == 0).sum()
+        fn += torch.logical_and(predict_labels == 0, gold_labels == 1).sum()
     precision = tp / (tp + fp + epsilon)
     recall = tp / (tp + fn + epsilon)
     f1 = 2 * precision * recall / (precision + recall + epsilon)

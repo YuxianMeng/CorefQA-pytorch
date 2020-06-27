@@ -45,6 +45,7 @@ class CoNLLDataset(Dataset):
 
 
 class CoNLLDataLoader(object):
+    max_doc_length = 5000
     def __init__(self, config, tokenizer=None, mode="train", language="english"):
         self.data_dir = config.data_dir 
         self.language = language 
@@ -62,11 +63,13 @@ class CoNLLDataLoader(object):
 
         self.num_train_instance = 0 
         self.num_dev_instance = 0 
-        self.num_test_instance = 0 
+        self.num_test_instance = 0
+        self.is_padding = config.is_padding
 
     def convert_examples_to_features(self, data_sign="train"):
         input_file = os.path.join(self.data_dir, "{}.{}.v4_gold_conll".format(data_sign, self.language))
-        features = prepare_conll_dataset(input_file, self.sliding_window_size, )
+        features = prepare_conll_dataset(input_file, self.sliding_window_size,
+                                         max_doc_length=self.max_doc_length if self.is_padding else None)
         self.__setattr__("num_{}_instance".format(data_sign), len(features))
 
         return features
