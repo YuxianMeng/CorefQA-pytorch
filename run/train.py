@@ -11,7 +11,6 @@ import os
 import yaml
 import time
 import random
-import logging
 import argparse
 import numpy as np
 import torch
@@ -25,21 +24,20 @@ from model.corefqa import CorefQA
 from module import metrics
 from module.optimization import AdamW, warmup_linear
 from module import model_utils
+from utils.logger import get_logger
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-                    datefmt='%m/%d/%Y %H:%M:%S',
-                    level=logging.INFO)
 
-logger = logging.getLogger(__name__)
+LOGGING = get_logger(__name__)
+
 
 try:
     import torch_xla
     import torch_xla.core.xla_model as xm
 except:
-    logger.info("=*=" * 10)
-    logger.info("DONOT ON TPU Now !!! ")
-    logger.info("IMPORT torch_xla when running on the Google Cloud TPU Pod. ")
-    logger.info("=*=" * 10)
+    LOGGING.info("=*=" * 10)
+    LOGGING.info("DONOT ON TPU Now !!! ")
+    LOGGING.info("IMPORT torch_xla when running on the Google Cloud TPU Pod. ")
+    LOGGING.info("=*=" * 10)
 
 
 def args_parser():
@@ -107,10 +105,10 @@ def load_model(config):
         n_gpu = 0
     else:
         device = torch.device("cuda")
-        print("-*-" * 10)
-        print("please notice that the device is :")
-        print(device)
-        print("-*-" * 10)
+        LOGGING.info("-*-" * 10)
+        LOGGING.info("please notice that the device is :")
+        LOGGING.info(device)
+        LOGGING.info("-*-" * 10)
         n_gpu = config.n_gpu
     bert_config = BertConfig.from_json_file(os.path.join(config.bert_model, "config.json"))
     model = CorefQA(bert_config, config, device)
@@ -178,19 +176,19 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
     if config.mention_proposal_only:
         precision, recall, f1 = evaluate_mention_proposal(model=model, dataloader=dev_dataloader,
                                                           device=device)
-        logging.info(f"metrics of mention proposal before training: f1:{f1}, precision: {precision}, recall: {recall}")
+        LOGGING.info(f"metrics of mention proposal before training: f1:{f1}, precision: {precision}, recall: {recall}")
 
     for epoch in range(int(config.num_train_epochs)):
         epoch_loss = 0.0
-        logging.info("=*=" * 20)
-        logging.info("start {} Epoch ... ".format(str(epoch)))
+        LOGGING.info("=*=" * 20)
+        LOGGING.info("start {} Epoch ... ".format(str(epoch)))
         model.train()
-        logger.info("Start epoch #{} (lr = {})...".format(epoch, config.lr))
+        LOGGING.info("Start epoch #{} (lr = {})...".format(epoch, config.lr))
 
         if config.debug:
-            logging.info("INFO: start train the CorefQA Model.")
+            LOGGING.info("INFO: start train the CorefQA Model.")
         # if config.is_master:
-        logger.info(f'--- Starting epoch {epoch}/{int(config.num_train_epochs) - 1}')
+        LOGGING.info(f'--- Starting epoch {epoch}/{int(config.num_train_epochs) - 1}')
         # if self.multi_gpu:
         #     torch.distributed.barrier()
 
@@ -307,7 +305,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                 global_step += 1
 
             if (step + 1) % eval_step == 0:
-                logger.info('Epoch: {}, Step: {} / {}, used_time = {:.2f}s, loss = {:.6f}'.format(
+                LOGGING.info('Epoch: {}, Step: {} / {}, used_time = {:.2f}s, loss = {:.6f}'.format(
                     epoch, step + 1, len(train_batches), time.time() - start_time, tr_loss / nb_tr_steps))
 
                 if config.do_eval:
@@ -315,7 +313,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                         precision, recall, f1 = evaluate_mention_proposal(model=model, dataloader=dev_dataloader,
                                                                           device=device)
                         if f1 > best_dev_average_f1:
-                            logging.info(f"best dev f1: {f1}, best_dev_p: {precision}, best_dev_r: {recall}")
+                            LOGGING.info(f"best dev f1: {f1}, best_dev_p: {precision}, best_dev_r: {recall}")
                             best_dev_average_f1 = f1
                             if config.save_model:
                                 output_model_file = os.path.join(config.output_dir,
@@ -323,7 +321,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                                 torch.save(model.state_dict(), output_model_file)
                             test_p, test_r, test_f1 = evaluate_mention_proposal(model=model, dataloader=test_dataloader,
                                                                                 device=device)
-                            logging.info(f"test_p: {test_p}, test_r: {test_r}, test f1: {test_f1}")
+                            LOGGING.info(f"test_p: {test_p}, test_r: {test_r}, test f1: {test_f1}")
 
                     else:
                         dev_summary_eval_dict, dev_average_f1 = evaluate(config, model, device, dev_dataloader, n_gpu,
@@ -418,7 +416,7 @@ def evaluate_mention_proposal(model: CorefQA, dataloader, device):
                 fn += 1
     precision = tp / (tp + fp + epsilon)
     recall = tp / (tp + fn + epsilon)
-    f1 = 2 / (1 / precision + 1 / recall)
+    f1 = 2 / (1 / precision + 1 / recall + epsilon)
     return precision, recall, f1
 
 
@@ -542,11 +540,11 @@ def merge_config(args_config):
     config_dict = yaml.safe_load(open(config_file_path))
     config = Config(config_dict[args_config.config_name])
     config.update_args(args_config)
-    logger.info("=" * 10 + "... Model Configs ..." + "=" * 10)
-    logger.info("{}".format(config.to_json_string()))
+    LOGGING.info("=" * 10 + "... Model Configs ..." + "=" * 10)
+    LOGGING.info("{}".format(config.to_json_string()))
     bert_config = Config.from_json_file(os.path.join(args_config.bert_model, "config.json"))
-    logger.info("=" * 10 + "... PRETRAINED Model Configs ..." + "=" * 10)
-    logger.info("{}".format(bert_config.to_json_string()))
+    LOGGING.info("=" * 10 + "... PRETRAINED Model Configs ..." + "=" * 10)
+    LOGGING.info("{}".format(bert_config.to_json_string()))
     return config
 
 

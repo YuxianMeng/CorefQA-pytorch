@@ -16,6 +16,10 @@ from typing import List
 
 from torch.utils.data import DataLoader, SequentialSampler, Dataset
 from data_loader.conll_data_processor import prepare_conll_dataset, CoNLLCorefResolution
+from utils.logger import get_logger
+
+
+LOGGING = get_logger(__name__)
 
 
 class CoNLLDataset(Dataset):
@@ -70,12 +74,14 @@ class CoNLLDataLoader(object):
     def get_dataloader(self, data_sign="train", use_cache=False):
         cache_file = os.path.join(self.data_dir, "{}.{}.v4_gold_conll.pkl".format(data_sign, self.language))
         if use_cache and os.path.exists(cache_file):
-            print(f"loading data from cached file {cache_file}")
+            LOGGING.info(f"loading data from cached file {cache_file}")
             features = pickle.load(open(cache_file, "rb"))
+            LOGGING.info(f"loaded data from cached file {cache_file}")
         else:
+            LOGGING.info(f"convert examples {data_sign} data")
             features = self.convert_examples_to_features(data_sign=data_sign)
             pickle.dump(features, open(cache_file, "wb"))
-            print(f"dump cached data to {cache_file}")
+            LOGGING.info(f"dump cached data to {cache_file}")
         dataset = CoNLLDataset(features)
 
         if data_sign == "dev":
