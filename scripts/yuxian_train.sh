@@ -2,11 +2,15 @@
 # -*- coding: utf-8 -*-
 
 
+
 exp_id=22_1
 FOLDER_PATH=/home/lixiaoya/yuxian/coref
 CONFIG_PATH=${FOLDER_PATH}/config/gpu_spanbert.yml
 DATA_PATH=/dev/shm/xiaoya/data
-BERT_PATH=/dev/shm/xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12
+#BERT_PATH=/dev/shm/xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12
+#BERT_PATH=/dev/shm/xiaoya/spanbert_finetune/finetune_spanbert_large_quoref
+#BERT_PATH=/dev/shm/xiaoya/spanbert_finetune/finetune_spanbert_base_squad2
+#BERT_PATH=/dev/shm/xiaoya/spanbert_finetune/finetune_spanbert_large_squad2
 EXPORT_DIR=/dev/shm/xiaoya/yuxian/test_output
 
 
@@ -26,8 +30,10 @@ output_path=/dev/shm/xiaoya/yuxian/corefqa_pytorch_output/${exp_id}
 mkdir -p ${output_path}
 export PYTHONPATH=${FOLDER_PATH}
 
+export CUDA_VISIBLE_DEVICES=3
+LOG_FILE="test_save_model.log"
 
-CUDA_VISIBLE_DEVICES=1 python3 ${FOLDER_PATH}/run/train.py \
+python3 ${FOLDER_PATH}/run/train.py \
 --n_gpu ${n_gpu} \
 --config_path ${CONFIG_PATH} \
 --config_name ${config_name} \
@@ -42,4 +48,5 @@ CUDA_VISIBLE_DEVICES=1 python3 ${FOLDER_PATH}/run/train.py \
 --mention_proposal_only \
 --use_cache_data \
 --do_eval true \
---fp16
+--save_model \
+> $LOG_FILE 2>&1 & tail -f $LOG_FILE
