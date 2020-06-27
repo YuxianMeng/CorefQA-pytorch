@@ -24,14 +24,14 @@ class CorefQA(BertPreTrainedModel):
 
         # other configs, todo(yuxian)
         self.pad_idx = 0
-        self.max_span_width = self.model_config.max_span_width 
-        self.span_ratio = self.model_config.span_ratio 
-        self.max_candidate_num = self.model_config.max_candidate_num 
+        self.max_span_width = self.model_config.max_span_width
+        self.span_ratio = self.model_config.span_ratio
+        self.max_candidate_num = self.model_config.max_candidate_num
         self.max_antecedent_num = self.model_config.max_antecedent_num
-        self.sliding_window_size = self.model_config.sliding_window_size 
-        self.mention_start_idx = self.model_config.mention_start_idx 
+        self.sliding_window_size = self.model_config.sliding_window_size
+        self.mention_start_idx = self.model_config.mention_start_idx
         self.mention_end_idx = self.model_config.mention_end_idx
-        self.mention_loss_ratio = self.model_config.mention_loss_ratio 
+        self.mention_loss_ratio = self.model_config.mention_loss_ratio
 
         self.apply(self.init_bert_weights)
         # mention proposal 

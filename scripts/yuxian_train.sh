@@ -4,16 +4,15 @@
 
 exp_id=22_1
 FOLDER_PATH=/home/lixiaoya/yuxian/coref
-CONFIG_PATH=${FOLDER_PATH}/config/gpu_bert.yml
+CONFIG_PATH=${FOLDER_PATH}/config/gpu_spanbert.yml
 DATA_PATH=/dev/shm/xiaoya/data
 BERT_PATH=/dev/shm/xiaoya/pretrain_ckpt/cased_L-12_H-768_A-12
 EXPORT_DIR=/dev/shm/xiaoya/yuxian/test_output
 
 
 exp_id=2020.06.24_morn
-config_name=bert_base
+config_name=spanbert_base
 learning_rate=3e-5
-dropout=0.2
 num_train_epoch=200
 eval_per_epoch=3
 warmup_proportion=-1
@@ -40,11 +39,7 @@ CUDA_VISIBLE_DEVICES=1 python3 ${FOLDER_PATH}/run/train.py \
 --num_train_epochs ${num_train_epoch} \
 --seed ${seed} \
 --output_dir ${output_path} \
---dropout ${dropout}
-#--loss_scale 0.3
-
-
-
-
-
-
+--mention_proposal_only \
+--use_cache_data \
+--do_eval true \
+--fp16
