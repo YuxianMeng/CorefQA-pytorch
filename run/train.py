@@ -26,9 +26,7 @@ from module.optimization import AdamW, warmup_linear
 from module import model_utils
 from utils.logger import get_logger
 
-
 LOGGING = get_logger(__name__)
-
 
 try:
     import torch_xla
@@ -58,7 +56,6 @@ def args_parser():
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=3006)
     parser.add_argument("--n_gpu", type=int, default=1)
-    parser.add_argument("--save_model", type=bool, default=False)
     parser.add_argument("--fp16_opt_level", type=str, default="O3",
                         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
                              "See details at https://nvidia.github.io/apex/amp.html", )
@@ -72,6 +69,7 @@ def args_parser():
     parser.add_argument("--mention_chunk_size", type=int, default=1, help="use mention chunk to reduce memory usage")
     parser.add_argument("--mention_proposal_only", action="store_true", help="only train mention proposal network")
     parser.add_argument("--use_cache_data", action="store_true", help="use cache data to save time")
+    parser.add_argument("--save_model", action="store_true", help="save model")
 
     args = parser.parse_args()
 
@@ -95,6 +93,9 @@ def load_data(config, data_sign="conll"):
     train_dataloader = dataloader.get_dataloader("train", use_cache=config.use_cache_data)
     dev_dataloader = dataloader.get_dataloader("dev", use_cache=config.use_cache_data)
     test_dataloader = dataloader.get_dataloader("test", use_cache=config.use_cache_data)
+    # train_dataloader = dataloader.get_dataloader("dev1", use_cache=config.use_cache_data)
+    # dev_dataloader = dataloader.get_dataloader("dev1", use_cache=config.use_cache_data)
+    # test_dataloader = dataloader.get_dataloader("dev1", use_cache=config.use_cache_data)
 
     return train_dataloader, dev_dataloader, test_dataloader
 
@@ -110,8 +111,10 @@ def load_model(config):
         LOGGING.info(device)
         LOGGING.info("-*-" * 10)
         n_gpu = config.n_gpu
-    bert_config = BertConfig.from_json_file(os.path.join(config.bert_model, "config.json"))
-    model = CorefQA(bert_config, config, device)
+    # naive_bert_config = BertConfig.from_json_file(os.path.join(config.bert_model, "config.json"))
+    # naive_model = CorefQA(naive_bert_config, config, device)
+    model = CorefQA.from_pretrained(config.bert_model, config=config, device=device)
+
 
     model.to(device)
 
@@ -174,6 +177,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
     eval_step = max(1, len(train_batches) // config.eval_per_epoch)
 
     if config.mention_proposal_only:
+        LOGGING.info(f"evaluating before training")
         precision, recall, f1 = evaluate_mention_proposal(model=model, dataloader=dev_dataloader,
                                                           device=device)
         LOGGING.info(f"metrics of mention proposal before training: f1:{f1}, precision: {precision}, recall: {recall}")
@@ -312,6 +316,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                     if config.mention_proposal_only:
                         precision, recall, f1 = evaluate_mention_proposal(model=model, dataloader=dev_dataloader,
                                                                           device=device)
+                        LOGGING.info(f"dev f1: {f1}, dev_p: {precision}, dev_r: {recall}")
                         if f1 > best_dev_average_f1:
                             LOGGING.info(f"best dev f1: {f1}, best_dev_p: {precision}, best_dev_r: {recall}")
                             best_dev_average_f1 = f1
@@ -319,9 +324,10 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                                 output_model_file = os.path.join(config.output_dir,
                                                                  "{}_{}.checkpoint".format(str(epoch), str(step + 1)))
                                 torch.save(model.state_dict(), output_model_file)
+                                LOGGING.info(f"save model to {output_model_file}")
                             test_p, test_r, test_f1 = evaluate_mention_proposal(model=model, dataloader=test_dataloader,
                                                                                 device=device)
-                            LOGGING.info(f"test_p: {test_p}, test_r: {test_r}, test f1: {test_f1}")
+                            LOGGING.info(f"test f1: {test_f1}, test_p: {test_p}, test_r: {test_r},")
 
                     else:
                         dev_summary_eval_dict, dev_average_f1 = evaluate(config, model, device, dev_dataloader, n_gpu,
@@ -337,6 +343,7 @@ def train(model: CorefQA, optimizer, sheduler, train_dataloader, dev_dataloader,
                                                                  "{}_{}.checkpoint".format(str(epoch), str(step + 1)))
                                 # output_config_file = os.path.join(config.output_dir, "{}_{}.conf".format(str(epoch), str(step+1)))
                                 torch.save(model_to_save.state_dict(), output_model_file)
+                                LOGGING.info(f"save model to {output_model_file}")
                                 # tokenizer.save_vocabulary(config.output_dir)
 
                             test_summary_dict_when_dev_best, test_average_f1_whem_dev_best = evaluate(config, model,
@@ -416,7 +423,7 @@ def evaluate_mention_proposal(model: CorefQA, dataloader, device):
                 fn += 1
     precision = tp / (tp + fp + epsilon)
     recall = tp / (tp + fn + epsilon)
-    f1 = 2 / (1 / precision + 1 / recall + epsilon)
+    f1 = 2 * precision * recall / (precision + recall + epsilon)
     return precision, recall, f1
 
 
